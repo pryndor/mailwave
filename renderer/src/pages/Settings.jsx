@@ -81,7 +81,6 @@ export default function Settings() {
   const [license, setLicense] = useState(null)
   const [licenseInput, setLicenseInput] = useState('')
   const [licenseBusy, setLicenseBusy] = useState(false)
-  const freeLimit = license?.freeLimit ?? 500
 
   useEffect(() => {
     window.api.startup.get().then(setStartupEnabled)
@@ -197,7 +196,7 @@ export default function Settings() {
             <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
               {license?.reason === 'expired'
                 ? `Your license expired on ${new Date(license.expiredOn).toLocaleDateString()} and the grace period has ended. Renew to restore Pro features.`
-                : `Free plan — up to ${freeLimit} subscribers, manual sending. Unlock automation, smart schedule, FTP/SFTP sync, and Brevo stats with Pro.`}
+                : 'Free plan — unlimited subscribers, manual sending. Unlock automation, smart schedule, FTP/SFTP sync, and Brevo stats with Pro.'}
             </p>
             <div className="form-row">
               <input className="input" placeholder="Paste your license key" value={licenseInput}

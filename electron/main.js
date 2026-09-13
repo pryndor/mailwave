@@ -212,10 +212,7 @@ ipcMain.handle('settings:get',    () => settings.getAll());
 ipcMain.handle('settings:save',   (_, data) => settings.save(data));
 
 // License
-ipcMain.handle('license:get', () => ({
-  ...license.getStatus(settings.getAll().license_key),
-  freeLimit: license.FREE_SUBSCRIBER_LIMIT,
-}));
+ipcMain.handle('license:get', () => license.getStatus(settings.getAll().license_key));
 ipcMain.handle('license:activate', (_, key) => {
   const status = license.getStatus(key);
   if (status.plan !== 'pro') return { ok: false, error: 'Invalid or expired license key.' };
@@ -228,26 +225,12 @@ ipcMain.handle('license:deactivate', () => {
 });
 ipcMain.handle('settings:test',   (_, data) => mailer.testConnection(data));
 
-// Subscribers — free tier is capped at license.FREE_SUBSCRIBER_LIMIT contacts.
-function subscriberCapError(adding = 1) {
-  if (license.isPro(settings.getAll().license_key)) return null;
-  const total = db.subscriberStats().total;
-  if (total + adding > license.FREE_SUBSCRIBER_LIMIT) {
-    return {
-      ok: false,
-      proRequired: true,
-      error: `Free plan is limited to ${license.FREE_SUBSCRIBER_LIMIT} subscribers (you have ${total}). Upgrade to Pro for unlimited subscribers.`,
-    };
-  }
-  return null;
-}
-
+// Subscribers — unlimited on every tier, no cap.
 ipcMain.handle('subscribers:list',   (_, opts) => db.listSubscribers(opts));
-ipcMain.handle('subscribers:add',    (_, sub)  => subscriberCapError(1) || db.addSubscriber(sub));
+ipcMain.handle('subscribers:add',    (_, sub)  => db.addSubscriber(sub));
 ipcMain.handle('subscribers:update', (_, sub)  => db.updateSubscriber(sub));
 ipcMain.handle('subscribers:delete', (_, ids)  => db.deleteSubscribers(ids));
-ipcMain.handle('subscribers:import', (_, rows, group_id) =>
-  subscriberCapError(rows.length) || db.importSubscribers(rows, group_id || null));
+ipcMain.handle('subscribers:import', (_, rows, group_id) => db.importSubscribers(rows, group_id || null));
 ipcMain.handle('subscribers:export', ()        => db.exportSubscribers());
 ipcMain.handle('subscribers:stats',  ()        => db.subscriberStats());
 ipcMain.handle('subscribers:customFields', ()  => db.listCustomFieldKeys());

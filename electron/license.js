@@ -15,10 +15,6 @@ const publicKey = crypto.createPublicKey(PUBLIC_KEY_PEM);
 // moment a card fails or they're a day late renewing.
 const GRACE_DAYS = 30;
 
-// Contacts a Free-tier install can hold. Chosen as a usage-based Pro gate
-// that doesn't touch core send/manage functionality.
-const FREE_SUBSCRIBER_LIMIT = 500;
-
 function b64urlDecode(str) {
   return Buffer.from(str, 'base64url');
 }
@@ -78,4 +74,4 @@ function isPro(licenseKey) {
   return getStatus(licenseKey).plan === 'pro';
 }
 
-module.exports = { getStatus, isPro, FREE_SUBSCRIBER_LIMIT, GRACE_DAYS };
+module.exports = { getStatus, isPro, GRACE_DAYS };

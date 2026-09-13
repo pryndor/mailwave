@@ -34,6 +34,6 @@ expiry and is meaningless without the matching private key to forge.
 - Expiry has a 30-day grace period (`GRACE_DAYS`) after which Pro features
   turn back off, but the app and Free-tier features never lock up — see
   `getStatus()`.
-- Free tier is capped at `FREE_SUBSCRIBER_LIMIT` (500) contacts; Pro removes
-  the cap and unlocks the automation bridge, Smart Schedule, FTP/SFTP sync,
-  and Brevo stats (see the `license.isPro()` calls in those modules).
+- Subscriber count is unlimited on every tier. Pro unlocks the automation
+  bridge, Smart Schedule, FTP/SFTP sync, and Brevo stats (see the
+  `license.isPro()` calls in those modules).
