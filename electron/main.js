@@ -287,12 +287,10 @@ ipcMain.handle('sync:fromServer', (_, cfg) => sync.syncFromServer(cfg));
 
 // Brevo stats
 const brevo = require('./brevo');
-const PRO_REQUIRED = { ok: false, error: 'Brevo stats is a Pro feature.', proRequired: true };
-const requirePro = (fn) => (...args) => license.isPro(settings.getAll().license_key) ? fn(...args) : PRO_REQUIRED;
 
-ipcMain.handle('brevo:stats',           requirePro(()      => brevo.getAccountStats(settings.getAll().brevo_api_key)));
-ipcMain.handle('brevo:today',           requirePro(()      => brevo.getTodayStats(settings.getAll().brevo_api_key)));
-ipcMain.handle('brevo:campaignMetrics', requirePro((_, id) => brevo.getCampaignMetrics(settings.getAll().brevo_api_key, id)));
+ipcMain.handle('brevo:stats',           ()      => brevo.getAccountStats(settings.getAll().brevo_api_key));
+ipcMain.handle('brevo:today',           ()      => brevo.getTodayStats(settings.getAll().brevo_api_key));
+ipcMain.handle('brevo:campaignMetrics', (_, id) => brevo.getCampaignMetrics(settings.getAll().brevo_api_key, id));
 
 // Notifications
 ipcMain.handle('notifications:list',        ()      => db.listNotifications());

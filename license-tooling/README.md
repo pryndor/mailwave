@@ -35,5 +35,6 @@ expiry and is meaningless without the matching private key to forge.
   turn back off, but the app and Free-tier features never lock up — see
   `getStatus()`.
 - Subscriber count is unlimited on every tier. Pro unlocks the automation
-  bridge, Smart Schedule, FTP/SFTP sync, and Brevo stats (see the
-  `license.isPro()` calls in those modules).
+  bridge, Smart Schedule, and FTP/SFTP sync (see the `license.isPro()`
+  calls in those modules). Brevo stats is a free read-only convenience,
+  not gated.

@@ -196,7 +196,7 @@ export default function Settings() {
             <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
               {license?.reason === 'expired'
                 ? `Your license expired on ${new Date(license.expiredOn).toLocaleDateString()} and the grace period has ended. Renew to restore Pro features.`
-                : 'Free plan — unlimited subscribers, manual sending. Unlock automation, smart schedule, FTP/SFTP sync, and Brevo stats with Pro.'}
+                : 'Free plan — unlimited subscribers, manual sending. Unlock automation, smart schedule, and FTP/SFTP sync with Pro.'}
             </p>
             <div className="form-row">
               <input className="input" placeholder="Paste your license key" value={licenseInput}
