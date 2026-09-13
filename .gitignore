@@ -1,0 +1,10 @@
+node_modules/
+renderer/node_modules/
+renderer/dist/
+dist-app/
+*.log
+.DS_Store
+
+# Electron userData (SQLite DB, settings.json) never belongs in the repo
+*.sqlite
+*.sqlite3

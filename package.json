@@ -1,0 +1,65 @@
+{
+  "name": "mailwave",
+  "version": "1.1.0",
+  "description": "Local bulk email newsletter tool",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:renderer\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
+    "dev:renderer": "cd renderer && npm run dev -- --port 5173 --strictPort",
+    "dev:electron": "electron .",
+    "build:renderer": "cd renderer && npm run build",
+    "build:app": "npm run build:renderer && electron-builder --linux",
+    "build": "npm run build:app",
+    "start": "electron ."
+  },
+  "keywords": [],
+  "author": { "name": "Bak.dev", "email": "admin@drugvigil.com" },
+  "homepage": "https://drugvigil.com",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1",
+    "wait-on": "^9.0.5"
+  },
+  "dependencies": {
+    "basic-ftp": "^5.2.2",
+    "better-sqlite3": "^12.9.0",
+    "nodemailer": "^8.0.5",
+    "papaparse": "^5.5.3",
+    "ssh2-sftp-client": "^12.1.1"
+  },
+  "build": {
+    "appId": "dev.bak.mailwave",
+    "productName": "MailWave",
+    "copyright": "Bak.dev",
+    "icon": "build/icon.png",
+    "directories": {
+      "output": "dist-app",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/dist/**/*",
+      "node_modules/**/*",
+      "!node_modules/.cache/**/*",
+      "!renderer/src/**/*",
+      "!renderer/node_modules/**/*"
+    ],
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] }
+      ],
+      "category": "Office",
+      "description": "Local bulk email newsletter tool",
+      "desktop": {
+        "entry": {
+          "Comment": "Bulk email newsletter manager",
+          "Categories": "Office;Email;Network;"
+        }
+      }
+    },
+    "npmRebuild": true
+  }
+}
