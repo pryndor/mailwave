@@ -14,6 +14,7 @@ const DEFAULTS = {
   from_email:      '',
   reply_to:        '',
   unsubscribe_email: '',
+  license_key:       '',
   batch_size:      50,
   batch_delay:     60,
   per_email_delay: 1,

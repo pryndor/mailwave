@@ -8,3 +8,7 @@ dist-app/
 # Electron userData (SQLite DB, settings.json) never belongs in the repo
 *.sqlite
 *.sqlite3
+
+# License signing private key — never commit. Only the public key (baked into
+# electron/license.js) ships with the app.
+license-tooling/private_key.pem

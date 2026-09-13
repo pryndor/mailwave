@@ -1,6 +1,8 @@
 // FTP / SFTP sync — pulls subscriber CSV from cPanel server
-const ftp  = require('basic-ftp');
-const Papa = require('papaparse');
+const ftp      = require('basic-ftp');
+const Papa     = require('papaparse');
+const settings = require('./settings');
+const license  = require('./license');
 
 async function syncFtp({ host, port, user, password, remote_path, protocol, tls }) {
   const client = new ftp.Client();
@@ -45,6 +47,10 @@ async function syncSftp({ host, port, user, password, remote_path }) {
 }
 
 async function syncFromServer(syncCfg) {
+  if (!license.isPro(settings.getAll().license_key)) {
+    return { ok: false, error: 'FTP/SFTP sync is a Pro feature.', proRequired: true };
+  }
+
   const result = syncCfg.protocol === 'sftp'
     ? await syncSftp(syncCfg)
     : await syncFtp(syncCfg);

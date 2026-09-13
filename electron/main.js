@@ -184,6 +184,7 @@ const db         = require('./db');
 const mailer     = require('./mailer');
 const settings   = require('./settings');
 const automation = require('./automation-server');
+const license    = require('./license');
 
 // Automation API settings
 ipcMain.handle('automation:get', () => {
@@ -209,14 +210,44 @@ ipcMain.handle('startup:set', (_, enabled) => {
 
 ipcMain.handle('settings:get',    () => settings.getAll());
 ipcMain.handle('settings:save',   (_, data) => settings.save(data));
+
+// License
+ipcMain.handle('license:get', () => ({
+  ...license.getStatus(settings.getAll().license_key),
+  freeLimit: license.FREE_SUBSCRIBER_LIMIT,
+}));
+ipcMain.handle('license:activate', (_, key) => {
+  const status = license.getStatus(key);
+  if (status.plan !== 'pro') return { ok: false, error: 'Invalid or expired license key.' };
+  settings.save({ license_key: key });
+  return { ok: true, status };
+});
+ipcMain.handle('license:deactivate', () => {
+  settings.save({ license_key: '' });
+  return { ok: true };
+});
 ipcMain.handle('settings:test',   (_, data) => mailer.testConnection(data));
 
-// Subscribers
+// Subscribers — free tier is capped at license.FREE_SUBSCRIBER_LIMIT contacts.
+function subscriberCapError(adding = 1) {
+  if (license.isPro(settings.getAll().license_key)) return null;
+  const total = db.subscriberStats().total;
+  if (total + adding > license.FREE_SUBSCRIBER_LIMIT) {
+    return {
+      ok: false,
+      proRequired: true,
+      error: `Free plan is limited to ${license.FREE_SUBSCRIBER_LIMIT} subscribers (you have ${total}). Upgrade to Pro for unlimited subscribers.`,
+    };
+  }
+  return null;
+}
+
 ipcMain.handle('subscribers:list',   (_, opts) => db.listSubscribers(opts));
-ipcMain.handle('subscribers:add',    (_, sub)  => db.addSubscriber(sub));
+ipcMain.handle('subscribers:add',    (_, sub)  => subscriberCapError(1) || db.addSubscriber(sub));
 ipcMain.handle('subscribers:update', (_, sub)  => db.updateSubscriber(sub));
 ipcMain.handle('subscribers:delete', (_, ids)  => db.deleteSubscribers(ids));
-ipcMain.handle('subscribers:import', (_, rows, group_id) => db.importSubscribers(rows, group_id || null));
+ipcMain.handle('subscribers:import', (_, rows, group_id) =>
+  subscriberCapError(rows.length) || db.importSubscribers(rows, group_id || null));
 ipcMain.handle('subscribers:export', ()        => db.exportSubscribers());
 ipcMain.handle('subscribers:stats',  ()        => db.subscriberStats());
 ipcMain.handle('subscribers:customFields', ()  => db.listCustomFieldKeys());
@@ -273,9 +304,12 @@ ipcMain.handle('sync:fromServer', (_, cfg) => sync.syncFromServer(cfg));
 
 // Brevo stats
 const brevo = require('./brevo');
-ipcMain.handle('brevo:stats',           ()        => brevo.getAccountStats(settings.getAll().brevo_api_key));
-ipcMain.handle('brevo:today',           ()        => brevo.getTodayStats(settings.getAll().brevo_api_key));
-ipcMain.handle('brevo:campaignMetrics', (_, id)   => brevo.getCampaignMetrics(settings.getAll().brevo_api_key, id));
+const PRO_REQUIRED = { ok: false, error: 'Brevo stats is a Pro feature.', proRequired: true };
+const requirePro = (fn) => (...args) => license.isPro(settings.getAll().license_key) ? fn(...args) : PRO_REQUIRED;
+
+ipcMain.handle('brevo:stats',           requirePro(()      => brevo.getAccountStats(settings.getAll().brevo_api_key)));
+ipcMain.handle('brevo:today',           requirePro(()      => brevo.getTodayStats(settings.getAll().brevo_api_key)));
+ipcMain.handle('brevo:campaignMetrics', requirePro((_, id) => brevo.getCampaignMetrics(settings.getAll().brevo_api_key, id)));
 
 // Notifications
 ipcMain.handle('notifications:list',        ()      => db.listNotifications());

@@ -1,5 +1,7 @@
-const db     = require('./db');
-const mailer = require('./mailer');
+const db       = require('./db');
+const mailer   = require('./mailer');
+const settings = require('./settings');
+const license  = require('./license');
 
 // Country name/ISO-code → primary IANA timezone. Multi-zone countries (US, Russia, Brazil,
 // Canada, Australia) are mapped to their most common business timezone — imprecise but a
@@ -86,6 +88,10 @@ function nextLocalTimeUtc(timeZone, hh, mm) {
 // in that group's local zone. Subscribers with no timezone set fall into a "default" bucket
 // scheduled using the sender machine's own local timezone.
 function smartScheduleByTimezone({ campaign_id, local_time }, mainWindow, getPort) {
+  if (!license.isPro(settings.getAll().license_key)) {
+    return { ok: false, error: 'Smart Schedule is a Pro feature.', proRequired: true };
+  }
+
   const campaign = db.getCampaign(campaign_id);
   if (!campaign) return { ok: false, error: 'Campaign not found' };
 

@@ -76,12 +76,36 @@ export default function Settings() {
   const [testing, setTesting]     = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [startupEnabled, setStartupEnabled] = useState(null) // null = unknown/unsupported (no systemd)
+  const [startupEnabled, setStartupEnabled] = useState(null) // null = unknown/unsupported platform
   const [startupBusy, setStartupBusy] = useState(false)
+  const [license, setLicense] = useState(null)
+  const [licenseInput, setLicenseInput] = useState('')
+  const [licenseBusy, setLicenseBusy] = useState(false)
+  const freeLimit = license?.freeLimit ?? 500
 
   useEffect(() => {
     window.api.startup.get().then(setStartupEnabled)
   }, [])
+
+  const loadLicense = () => window.api.license.get().then(setLicense)
+  useEffect(() => { loadLicense() }, [])
+
+  const activateLicense = async () => {
+    setLicenseBusy(true)
+    const r = await window.api.license.activate(licenseInput.trim())
+    setLicenseBusy(false)
+    if (!r.ok) { toast.error(r.error); return }
+    setLicenseInput('')
+    toast.success('Pro activated — thank you!')
+    loadLicense()
+  }
+
+  const deactivateLicense = async () => {
+    setLicenseBusy(true)
+    await window.api.license.deactivate()
+    setLicenseBusy(false)
+    loadLicense()
+  }
 
   const toggleStartup = async (checked) => {
     setStartupBusy(true)
@@ -147,6 +171,44 @@ export default function Settings() {
       <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 24 }}>
         Configure any SMTP email provider. You can change this at any time.
       </p>
+
+      {/* ── License ── */}
+      <section style={{ marginBottom: 24 }}>
+        <h3 style={{ fontSize: 14, color: 'var(--text-h)', marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
+          License
+        </h3>
+
+        {license?.plan === 'pro' ? (
+          <div>
+            <p style={{ fontSize: 13, marginBottom: 8 }}>
+              <strong style={{ color: license.status === 'grace' ? '#e0a020' : '#22c55e' }}>
+                {license.status === 'grace' ? 'Pro (renewal needed)' : 'Pro'}
+              </strong>
+              {' — '}{license.email}
+              {license.status === 'active' && ` — renews ${new Date(license.expires).toLocaleDateString()} (${license.daysLeft} days)`}
+              {license.status === 'grace' && ` — expired ${new Date(license.expires).toLocaleDateString()}, Pro features stop in ${license.daysLeft} day(s) unless renewed`}
+            </p>
+            <button className="btn btn-ghost" onClick={deactivateLicense} disabled={licenseBusy}>
+              Remove License
+            </button>
+          </div>
+        ) : (
+          <div>
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
+              {license?.reason === 'expired'
+                ? `Your license expired on ${new Date(license.expiredOn).toLocaleDateString()} and the grace period has ended. Renew to restore Pro features.`
+                : `Free plan — up to ${freeLimit} subscribers, manual sending. Unlock automation, smart schedule, FTP/SFTP sync, and Brevo stats with Pro.`}
+            </p>
+            <div className="form-row">
+              <input className="input" placeholder="Paste your license key" value={licenseInput}
+                onChange={e => setLicenseInput(e.target.value)} style={{ flex: 1 }} />
+              <button className="btn btn-primary" onClick={activateLicense} disabled={licenseBusy || !licenseInput.trim()}>
+                {licenseBusy ? 'Checking...' : 'Activate'}
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* ── Provider picker ── */}
       <section>

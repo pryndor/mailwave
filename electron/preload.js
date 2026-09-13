@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld('api', {
     test: (data) => invoke('settings:test', data),
   },
 
+  // License
+  license: {
+    get:        ()    => invoke('license:get'),
+    activate:   (key) => invoke('license:activate', key),
+    deactivate: ()    => invoke('license:deactivate'),
+  },
+
   // Subscribers
   subscribers: {
     list:   (opts) => invoke('subscribers:list', opts),

@@ -3,6 +3,7 @@
 //   Authorization: Bearer <automation_token from settings>
 const http = require('http');
 const crypto = require('crypto');
+const license = require('./license');
 
 let server = null;
 
@@ -28,6 +29,7 @@ function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
 
   const cfg = settings.getAll();
   if (!cfg.automation_enabled) return null;
+  if (!license.isPro(cfg.license_key)) return null;
 
   let token = cfg.automation_token;
   if (!token) {

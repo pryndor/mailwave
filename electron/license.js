@@ -1,0 +1,81 @@
+const crypto = require('crypto');
+
+// Public half of the Ed25519 keypair used to sign license tokens. The private
+// key never ships with the app — it lives only in license-tooling/ (gitignored)
+// and is used offline to issue tokens on purchase. Verification here needs no
+// network call, so Pro features keep working with no internet connection.
+const PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA1wfP+aRRalqP9DDzmYU24/1eUvLmOGP9aJfx8TA66Ss=
+-----END PUBLIC KEY-----`;
+
+const publicKey = crypto.createPublicKey(PUBLIC_KEY_PEM);
+
+// Renewal payment failed or lapsed: keep Pro features working for this many
+// days past expiry rather than hard-locking a paying customer's app the
+// moment a card fails or they're a day late renewing.
+const GRACE_DAYS = 30;
+
+// Contacts a Free-tier install can hold. Chosen as a usage-based Pro gate
+// that doesn't touch core send/manage functionality.
+const FREE_SUBSCRIBER_LIMIT = 500;
+
+function b64urlDecode(str) {
+  return Buffer.from(str, 'base64url');
+}
+
+// Verifies signature + shape only. Does not evaluate expiry — see getStatus().
+function parseToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.trim().split('.');
+  if (parts.length !== 2) return null;
+  const [payloadB64, sigB64] = parts;
+
+  let signature;
+  try {
+    signature = b64urlDecode(sigB64);
+  } catch {
+    return null;
+  }
+
+  const valid = crypto.verify(null, Buffer.from(payloadB64), publicKey, signature);
+  if (!valid) return null;
+
+  try {
+    const payload = JSON.parse(b64urlDecode(payloadB64).toString('utf8'));
+    if (payload.plan !== 'pro' || !payload.email || !payload.expires) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// Returns one of:
+//   { plan: 'free' }
+//   { plan: 'free', reason: 'invalid' | 'expired', ... }
+//   { plan: 'pro', status: 'active' | 'grace', email, expires, daysLeft }
+function getStatus(licenseKey) {
+  if (!licenseKey) return { plan: 'free' };
+
+  const payload = parseToken(licenseKey);
+  if (!payload) return { plan: 'free', reason: 'invalid' };
+
+  const expires   = new Date(payload.expires);
+  const graceEnds = new Date(expires.getTime() + GRACE_DAYS * 24 * 60 * 60 * 1000);
+  const now       = new Date();
+
+  if (now <= expires) {
+    const daysLeft = Math.ceil((expires - now) / (24 * 60 * 60 * 1000));
+    return { plan: 'pro', status: 'active', email: payload.email, expires: payload.expires, daysLeft };
+  }
+  if (now <= graceEnds) {
+    const daysLeft = Math.ceil((graceEnds - now) / (24 * 60 * 60 * 1000));
+    return { plan: 'pro', status: 'grace', email: payload.email, expires: payload.expires, daysLeft };
+  }
+  return { plan: 'free', reason: 'expired', email: payload.email, expiredOn: payload.expires };
+}
+
+function isPro(licenseKey) {
+  return getStatus(licenseKey).plan === 'pro';
+}
+
+module.exports = { getStatus, isPro, FREE_SUBSCRIBER_LIMIT, GRACE_DAYS };
