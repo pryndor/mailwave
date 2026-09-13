@@ -5,10 +5,12 @@ const path       = require('path');
 const settings   = require('./settings');
 const db         = require('./db');
 
-let stopFlag = false;
+// Per-campaign stop requests — a module-level bool would let concurrent sends
+// (e.g. auto-resume firing while another campaign is mid-send) cancel each other.
+const stopRequested = new Set();
 
-function stopSending() {
-  stopFlag = true;
+function stopSending(campaign_id) {
+  stopRequested.add(campaign_id);
   return { ok: true };
 }
 
@@ -147,7 +149,7 @@ function calcNextResumeTime(timeStr) {
 
 // ── Main send ─────────────────────────────────────────────────────────────────
 async function sendCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWindow, getPort) {
-  stopFlag = false;
+  stopRequested.delete(campaign_id);
   const cfg      = settings.getAll();
   const campaign = db.getCampaign(campaign_id);
   if (!campaign) return { ok: false, error: 'Campaign not found' };
@@ -199,7 +201,8 @@ async function sendCampaign({ campaign_id, preview_to, start_offset = 0 }, mainW
   const splitAt = isAB ? Math.floor(allSubscribers.length * (campaign.ab_split_pct || 50) / 100) : allSubscribers.length;
 
   for (let i = 0; i < subscribers.length; i++) {
-    if (stopFlag) {
+    if (stopRequested.has(campaign_id)) {
+      stopRequested.delete(campaign_id);
       if (!preview_to) db.updateCampaignProgress(campaign_id, start_offset + sent, total, 'stopped');
       notify({ stopped: true });
       transport.close();
@@ -224,6 +227,7 @@ async function sendCampaign({ campaign_id, preview_to, start_offset = 0 }, mainW
         pushNotif();
         notify({ paused: true, resumeAt });
         transport.close();
+        stopRequested.delete(campaign_id);
         return { ok: true, sent, failed, paused: true, resumeAt };
       }
     }
@@ -311,6 +315,7 @@ async function sendCampaign({ campaign_id, preview_to, start_offset = 0 }, mainW
   }
   transport.close();
   notify({ done: true });
+  stopRequested.delete(campaign_id);
   return { ok: true, sent: start_offset + sent, failed, total };
 }
 

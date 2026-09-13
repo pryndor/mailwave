@@ -1,23 +1,52 @@
-const { execFileSync } = require('child_process');
+const { app } = require('electron');
+const fs      = require('fs');
+const path    = require('path');
+const os      = require('os');
 
-const SERVICE = 'mailwave.service';
+const AUTOSTART_DIR  = path.join(os.homedir(), '.config', 'autostart');
+const DESKTOP_FILE    = path.join(AUTOSTART_DIR, 'mailwave.desktop');
 
-// Returns true/false, or null if systemd/the unit isn't available (e.g. non-Linux, no systemd).
+// AppImage sets this env var to the real .AppImage file path. process.execPath
+// would otherwise point at the temporary FUSE mount, which changes every launch
+// and would break the autostart entry.
+function linuxExecPath() {
+  return process.env.APPIMAGE || process.execPath;
+}
+
 function isEnabled() {
-  try {
-    const out = execFileSync('systemctl', ['--user', 'is-enabled', SERVICE], { encoding: 'utf8' }).trim();
-    return out === 'enabled';
-  } catch (err) {
-    const out = (err.stdout || '').toString().trim();
-    if (out === 'disabled') return false;
-    return null;
+  if (process.platform === 'darwin' || process.platform === 'win32') {
+    return app.getLoginItemSettings().openAtLogin;
   }
+  if (process.platform === 'linux') {
+    return fs.existsSync(DESKTOP_FILE);
+  }
+  return null;
 }
 
 function setEnabled(enabled) {
   try {
-    execFileSync('systemctl', ['--user', enabled ? 'enable' : 'disable', SERVICE], { encoding: 'utf8' });
-    return { ok: true };
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      app.setLoginItemSettings({ openAtLogin: enabled });
+      return { ok: true };
+    }
+    if (process.platform === 'linux') {
+      if (enabled) {
+        fs.mkdirSync(AUTOSTART_DIR, { recursive: true });
+        const entry = [
+          '[Desktop Entry]',
+          'Type=Application',
+          'Name=MailWave',
+          `Exec="${linuxExecPath()}"`,
+          'X-GNOME-Autostart-enabled=true',
+          '',
+        ].join('\n');
+        fs.writeFileSync(DESKTOP_FILE, entry, 'utf8');
+      } else if (fs.existsSync(DESKTOP_FILE)) {
+        fs.unlinkSync(DESKTOP_FILE);
+      }
+      return { ok: true };
+    }
+    return { ok: false, error: `Run-at-startup not supported on ${process.platform}` };
   } catch (err) {
     return { ok: false, error: err.message };
   }

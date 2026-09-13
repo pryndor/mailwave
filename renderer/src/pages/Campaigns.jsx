@@ -394,7 +394,7 @@ function SendPanel({ campaign, onDone }) {
   }
 
   const stop = async () => {
-    await window.api.campaigns.stop()
+    await window.api.campaigns.stop(campaign.id)
     toast.success('Stopping after current batch...')
   }
 

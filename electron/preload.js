@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
 
 contextBridge.exposeInMainWorld('api', {
-  // Run-at-startup (systemd user service toggle)
+  // Run-at-startup (native login items on win/mac, XDG autostart entry on linux)
   startup: {
     get: ()        => invoke('startup:get'),
     set: (enabled) => invoke('startup:set', enabled),
@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld('api', {
     delete:                 (id)   => invoke('campaigns:delete', id),
     duplicate:              (id)   => invoke('campaigns:duplicate', id),
     send:                   (data) => invoke('campaigns:send', data),
-    stop:                   ()     => invoke('campaigns:stop'),
+    stop:                   (id)   => invoke('campaigns:stop', id),
     resume:                 (id)   => invoke('campaigns:resume', id),
     schedule:               (data) => invoke('campaigns:schedule', data),
     cancelSchedule:         (id)   => invoke('campaigns:cancelSchedule', id),
