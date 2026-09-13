@@ -1,0 +1,9 @@
+{
+  "name": "mailwave-license-webhook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Razorpay webhook -> MailWave Pro license issuance. Deploys as a standalone Vercel project, separate from the desktop app.",
+  "dependencies": {
+    "nodemailer": "^8.0.5"
+  }
+}

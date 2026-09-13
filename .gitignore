@@ -12,3 +12,8 @@ dist-app/
 # License signing private key — never commit. Only the public key (baked into
 # electron/license.js) ships with the app.
 license-tooling/private_key.pem
+
+# Payment webhook — Vercel deploy artifacts and local secrets
+payment-webhook/node_modules/
+payment-webhook/.env
+payment-webhook/.vercel/
