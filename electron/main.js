@@ -1,6 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, globalShortcut, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut, Tray, Menu, nativeImage, shell } = require('electron');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// Fixed here (not passed from the renderer) so a compromised renderer can't
+// redirect this to an arbitrary URL — the click only ever triggers this one.
+const UPGRADE_URL = 'https://rzp.io/rzp/hz68qyl';
 
 let mainWindow;
 let tray = null;
@@ -221,6 +225,10 @@ ipcMain.handle('license:activate', (_, key) => {
 });
 ipcMain.handle('license:deactivate', () => {
   settings.save({ license_key: '' });
+  return { ok: true };
+});
+ipcMain.handle('license:openUpgrade', () => {
+  shell.openExternal(UPGRADE_URL);
   return { ok: true };
 });
 ipcMain.handle('settings:test',   (_, data) => mailer.testConnection(data));

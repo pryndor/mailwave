@@ -18,9 +18,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // License
   license: {
-    get:        ()    => invoke('license:get'),
-    activate:   (key) => invoke('license:activate', key),
-    deactivate: ()    => invoke('license:deactivate'),
+    get:          ()    => invoke('license:get'),
+    activate:     (key) => invoke('license:activate', key),
+    deactivate:   ()    => invoke('license:deactivate'),
+    openUpgrade:  ()    => invoke('license:openUpgrade'),
   },
 
   // Subscribers

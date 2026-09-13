@@ -198,10 +198,15 @@ export default function Settings() {
                 ? `Your license expired on ${new Date(license.expiredOn).toLocaleDateString()} and the grace period has ended. Renew to restore Pro features.`
                 : 'Unlock automation, smart schedule, and FTP/SFTP sync with Pro.'}
             </p>
+            <div className="form-row" style={{ marginBottom: 8 }}>
+              <button className="btn btn-primary" onClick={() => window.api.license.openUpgrade()}>
+                Upgrade to Pro
+              </button>
+            </div>
             <div className="form-row">
-              <input className="input" placeholder="Paste your license key" value={licenseInput}
+              <input className="input" placeholder="Already have a license key? Paste it here" value={licenseInput}
                 onChange={e => setLicenseInput(e.target.value)} style={{ flex: 1 }} />
-              <button className="btn btn-primary" onClick={activateLicense} disabled={licenseBusy || !licenseInput.trim()}>
+              <button className="btn btn-ghost" onClick={activateLicense} disabled={licenseBusy || !licenseInput.trim()}>
                 {licenseBusy ? 'Checking...' : 'Activate'}
               </button>
             </div>
