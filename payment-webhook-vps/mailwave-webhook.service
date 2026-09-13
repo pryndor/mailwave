@@ -1,0 +1,16 @@
+[Unit]
+Description=MailWave Pro license webhook
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/webhook.drugvigil.com
+EnvironmentFile=/var/www/webhook.drugvigil.com/.env
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target
