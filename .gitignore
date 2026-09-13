@@ -22,3 +22,7 @@ payment-webhook/.vercel/
 team-backend/node_modules/
 team-backend/.env
 team-backend/.vercel/
+
+# cPanel Python webhook
+payment-webhook-cpanel/__pycache__/
+payment-webhook-cpanel/.env
