@@ -2,7 +2,7 @@
 
 A local-first desktop app for sending bulk email newsletters through your own SMTP account — no monthly SaaS fee, no vendor lock-in, your subscriber data never leaves your machine.
 
-Built with Electron + React. Runs on Linux (AppImage), Windows and Mac builds planned.
+Built with Electron + React. Ships Linux (AppImage), Windows (NSIS installer), and Mac (dmg/zip) builds — Windows and Mac builds are unsigned for now, see [Install](#install).
 
 ## Why
 
@@ -22,25 +22,34 @@ Tools like Mailchimp or Brevo charge monthly per-subscriber fees and host your l
 
 ## Install
 
-Download the latest AppImage from [Releases](../../releases), make it executable, and run:
+Download the latest build for your platform from [Releases](../../releases).
 
+**Linux:**
 ```bash
 chmod +x MailWave-*.AppImage
 ./MailWave-*.AppImage
 ```
 
+**Windows:** run the `.exe` installer. Unsigned build — Windows SmartScreen will warn on first run; click "More info" → "Run anyway".
+
+**Mac:** open the `.dmg`. Unsigned/not notarized yet — Gatekeeper will block it as from an "unidentified developer". Right-click the app → Open, or run `xattr -cr /Applications/MailWave.app` once installed.
+
 ## Build from source
 
-Requires Node.js 18+.
+Requires Node.js 18+. Native modules (`better-sqlite3`) must be built on the OS you're targeting — you can't cross-compile a Mac build from Linux, for example.
 
 ```bash
 git clone <this-repo>
 cd mailwave
 npm install
 cd renderer && npm install && cd ..
-npm run dev        # development mode
-npm run build:app  # production AppImage (Linux)
+npm run dev         # development mode
+npm run build:linux # AppImage
+npm run build:win   # NSIS installer (run on Windows)
+npm run build:mac   # dmg + zip (run on macOS)
 ```
+
+CI (`.github/workflows/build.yml`) builds all three platforms on their native runners and attaches them as a draft GitHub Release when you push a `v*` tag.
 
 ## Configuration
 

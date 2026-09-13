@@ -8,14 +8,17 @@
     "dev:renderer": "cd renderer && npm run dev -- --port 5173 --strictPort",
     "dev:electron": "electron .",
     "build:renderer": "cd renderer && npm run build",
-    "build:app": "npm run build:renderer && electron-builder --linux",
+    "build:linux": "npm run build:renderer && electron-builder --linux",
+    "build:win": "npm run build:renderer && electron-builder --win",
+    "build:mac": "npm run build:renderer && electron-builder --mac",
+    "build:app": "npm run build:linux",
     "build": "npm run build:app",
     "start": "electron ."
   },
   "keywords": [],
   "author": { "name": "Bak.dev", "email": "admin@drugvigil.com" },
   "homepage": "https://drugvigil.com",
-  "license": "ISC",
+  "license": "AGPL-3.0-only",
   "type": "commonjs",
   "devDependencies": {
     "concurrently": "^9.2.1",
@@ -59,6 +62,24 @@
           "Categories": "Office;Email;Network;"
         }
       }
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.business"
     },
     "npmRebuild": true
   }
