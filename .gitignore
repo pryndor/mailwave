@@ -17,3 +17,8 @@ license-tooling/private_key.pem
 payment-webhook/node_modules/
 payment-webhook/.env
 payment-webhook/.vercel/
+
+# Team backend — same
+team-backend/node_modules/
+team-backend/.env
+team-backend/.vercel/
