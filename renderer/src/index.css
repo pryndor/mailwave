@@ -123,3 +123,7 @@ tr:hover td { background: var(--bg3); }
 
 /* Checkbox */
 input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+
+/* Spinning icon for in-progress buttons (AI generation) */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }

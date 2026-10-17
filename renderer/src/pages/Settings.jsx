@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Check, Wifi, Info, ChevronDown, ChevronUp, Bell, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
+import TeamSyncSettings from '../components/TeamSyncSettings.jsx'
+import WorkspaceSettings from '../components/WorkspaceSettings.jsx'
+import AISettings from '../components/AISettings.jsx'
 
 // Known providers — just fills in the fields, user can always edit manually
 const PROVIDERS = [
@@ -213,6 +216,18 @@ export default function Settings() {
           </div>
         )}
       </section>
+
+      <TeamSyncSettings />
+
+      <div className="divider" />
+
+      <WorkspaceSettings />
+
+      <div className="divider" />
+
+      <AISettings />
+
+      <div className="divider" />
 
       {/* ── Provider picker ── */}
       <section>

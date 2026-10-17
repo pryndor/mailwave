@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle, XCircle, AlertTriangle, Send, X } from 'lucide-react'
 import { checkSpam } from '../utils/spamCheck.js'
+import AIReview from './AIReview.jsx'
 
 export default function PreSendChecklist({ campaign, subscriberCount, onConfirm, onCancel }) {
   const [checks, setChecks]   = useState([])
@@ -162,6 +163,8 @@ export default function PreSendChecklist({ campaign, subscriberCount, onConfirm,
             </div>
           </div>
         )}
+
+        <AIReview campaign={campaign} />
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>

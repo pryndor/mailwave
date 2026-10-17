@@ -1,15 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Send, Eye, Trash2, Edit2, StopCircle, Calendar, Clock, Copy, Paperclip, X, BarChart2, FlaskConical, PlayCircle, Wand2 } from 'lucide-react'
+import { Plus, Send, Eye, Trash2, Edit2, StopCircle, Calendar, Clock, Copy, Paperclip, X, BarChart2, FlaskConical, PlayCircle, Wand2, Sparkles, CornerUpRight, ShieldCheck, Undo2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import RichEditor from '../components/RichEditor.jsx'
 import PreSendChecklist from '../components/PreSendChecklist.jsx'
 import CampaignMetrics from '../components/CampaignMetrics.jsx'
+import AIWriter from '../components/AIWriter.jsx'
+import AIReview from '../components/AIReview.jsx'
+import useAiConfig from '../hooks/useAiConfig.js'
 
 export default function Campaigns() {
   const [campaigns, setCampaigns] = useState([])
   const [editing, setEditing]     = useState(null)
   const [sending, setSending]     = useState(null)
   const [metrics, setMetrics]     = useState(null)
+  const [aiStart, setAiStart]     = useState(null)   // open the AI writer when the editor mounts
+  const { ready: aiReady } = useAiConfig()
 
   const load = () => window.api.campaigns.list().then(setCampaigns)
   useEffect(() => { load() }, [])
@@ -37,10 +42,23 @@ export default function Campaigns() {
     load()
   }
 
+  // New draft that follows up on a sent campaign: same sender and groups,
+  // body written by the AI writer (opened in follow-up mode).
+  const followUp = (c) => {
+    setAiStart({ mode: 'followUp', followUpOf: c })
+    setEditing({
+      name: `Follow-up: ${c.name}`, subject: '', from_name: c.from_name, from_email: c.from_email,
+      reply_to: c.reply_to, html: '', text: '', group_ids: c.group_ids || [], attachments: [],
+      ab_subject_b: '', ab_split_pct: 50,
+    })
+  }
+
+  const closeEditor = () => { setEditing(null); setAiStart(null) }
+
   if (editing !== null) {
-    return <CampaignEditor camp={editing === 'new' ? null : editing}
-      onSave={() => { setEditing(null); load() }}
-      onCancel={() => setEditing(null)} />
+    return <CampaignEditor camp={editing === 'new' ? null : editing} aiStart={aiStart}
+      onSave={() => { closeEditor(); load() }}
+      onCancel={closeEditor} />
   }
 
   if (sending) {
@@ -74,11 +92,17 @@ export default function Campaigns() {
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
                   {c.subject} · {c.from_email || 'No sender set'}
-                  {c.sent_at && ` · Sent ${c.sent_at.slice(0,10)}`}
+                  {c.sent_at && ` · Sent ${fmtDateTime(c.sent_at)}`}
                 </div>
                 {(c.status === 'sent' || c.status === 'sending') && c.total_count > 0 && (
                   <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>
                     {c.sent_count}/{c.total_count} sent
+                  </div>
+                )}
+                {c.scheduled_at && c.status !== 'sent' && c.status !== 'sending' && (
+                  <div style={{ fontSize: 12, marginTop: 3, color: 'var(--accent)' }}>
+                    <Clock size={11} style={{ verticalAlign: -1, marginRight: 3 }} />
+                    Scheduled for {fmtDateTime(c.scheduled_at)}
                   </div>
                 )}
                 {c.status === 'paused' && (
@@ -99,6 +123,9 @@ export default function Campaigns() {
                 <button className="btn btn-ghost btn-sm" onClick={() => duplicate(c.id)} title="Duplicate"><Copy size={12} /></button>
                 {c.status === 'sent' && (
                   <button className="btn btn-ghost btn-sm" onClick={() => setMetrics(c)}><BarChart2 size={12} /> Metrics</button>
+                )}
+                {c.status === 'sent' && aiReady && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => followUp(c)} title="Write a follow-up campaign with AI"><CornerUpRight size={12} /> Follow-up</button>
                 )}
                 {(c.status === 'draft' || c.status === 'stopped') && (
                   <button className="btn btn-primary btn-sm" onClick={() => setSending(c)}><Send size={12} /> Send</button>
@@ -134,13 +161,38 @@ function fmtDateTime(iso) {
 }
 
 // ── Campaign Editor ───────────────────────────────────────────────────────────
-function CampaignEditor({ camp, onSave, onCancel }) {
+function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
   const [form, setForm]       = useState(camp || { name: '', subject: '', from_name: '', from_email: '', reply_to: '', html: '', text: '', group_ids: [], attachments: [], ab_subject_b: '', ab_split_pct: 50 })
   const [groups, setGroups]   = useState([])
   const [templates, setTemplates] = useState([])
   const [customTags, setCustomTags] = useState([])
   const [mergePreview, setMergePreview] = useState(null)
+  const { ready: aiReady } = useAiConfig()
+  const [aiWriter, setAiWriter] = useState(aiStart)     // { mode, followUpOf } or null
+  const [aiUndo, setAiUndo]     = useState(null)        // fields before the last AI apply
+  const [showReview, setShowReview] = useState(false)
+  const [subjectIdeas, setSubjectIdeas] = useState(null) // null | 'loading' | [{subject, reason}]
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // AI output replaces subject/body/plain text, but keeps a snapshot so one
+  // click restores what was there before.
+  const applyAi = (r) => {
+    setAiUndo({ subject: form.subject, html: form.html, text: form.text })
+    setForm(f => ({ ...f, subject: r.subject || f.subject, html: r.html, text: r.text }))
+    setAiWriter(null)
+    toast.success('AI draft added. Review it before sending')
+  }
+  const undoAi = () => {
+    setForm(f => ({ ...f, ...aiUndo }))
+    setAiUndo(null)
+  }
+
+  const suggestSubjects = async () => {
+    setSubjectIdeas('loading')
+    const r = await window.api.ai.subjects({ subject: form.subject, html: form.html })
+    if (!r.ok) { setSubjectIdeas(null); toast.error(r.error); return }
+    setSubjectIdeas(r.options)
+  }
 
   const previewMerge = async () => {
     const r = await window.api.campaigns.previewMerge({ campaign: form })
@@ -200,13 +252,37 @@ function CampaignEditor({ camp, onSave, onCancel }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <h2 style={{ fontSize: 16, color: 'var(--text-h)', fontWeight: 700 }}>{camp ? 'Edit Campaign' : 'New Campaign'}</h2>
+        <h2 style={{ fontSize: 16, color: 'var(--text-h)', fontWeight: 700 }}>{camp?.id ? 'Edit Campaign' : 'New Campaign'}</h2>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" disabled={!aiReady} onClick={() => setAiWriter({ mode: 'draft' })}
+            title={aiReady ? 'Draft, follow up or reply with AI' : 'Turn on AI in Settings first'}>
+            <Sparkles size={14} /> Write with AI
+          </button>
+          <button className="btn btn-ghost" disabled={!aiReady} onClick={() => setShowReview(true)}
+            title={aiReady ? 'Check this email with AI before sending' : 'Turn on AI in Settings first'}>
+            <ShieldCheck size={14} /> AI Review
+          </button>
           <button className="btn btn-ghost" onClick={previewMerge}><Wand2 size={14} /> Preview Merge</button>
           <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
           <button className="btn btn-primary" onClick={save}>Save Campaign</button>
         </div>
       </div>
+      {aiWriter && (
+        <AIWriter initialMode={aiWriter.mode} followUpOf={aiWriter.followUpOf}
+          onApply={applyAi} onClose={() => setAiWriter(null)} />
+      )}
+      {showReview && (
+        <div className="modal-overlay">
+          <div className="modal modal-lg" style={{ maxHeight: '90vh', overflow: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h3 style={{ margin: 0 }}>AI Review</h3>
+              <button onClick={() => setShowReview(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}><X size={18} /></button>
+            </div>
+            <AIReview campaign={form} onUseSubject={(s) => { set('subject', s); toast.success('Subject updated') }} />
+            <div style={{ textAlign: 'right' }}><button className="btn btn-ghost" onClick={() => setShowReview(false)}>Close</button></div>
+          </div>
+        </div>
+      )}
       {mergePreview && (
         <div className="modal-overlay" onClick={() => setMergePreview(null)}>
           <div className="modal" style={{ maxWidth: 600 }} onClick={e => e.stopPropagation()}>
@@ -233,6 +309,13 @@ function CampaignEditor({ camp, onSave, onCancel }) {
       <div style={{ flex: 1, overflow: 'auto', padding: 20, display: 'grid', gridTemplateColumns: '1fr 280px', gap: 20 }}>
         {/* Main form */}
         <div>
+          {aiUndo && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', marginBottom: 14, background: 'var(--accent-bg)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--accent)' }}>
+              <Sparkles size={13} /> <span style={{ flex: 1 }}>Subject and body were written by AI. Check facts, links and [placeholders] before sending.</span>
+              <button className="btn btn-ghost btn-sm" onClick={undoAi}><Undo2 size={12} /> Undo AI</button>
+              <button onClick={() => setAiUndo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)' }}><X size={13} /></button>
+            </div>
+          )}
           <div className="form-group"><label>Campaign Name</label><input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. June Promotion" /></div>
           <div className="form-group">
             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -241,7 +324,34 @@ function CampaignEditor({ camp, onSave, onCancel }) {
                 Merge tags: <code style={{ color: 'var(--accent)', background: 'var(--accent-bg)', padding: '1px 5px', borderRadius: 3 }}>{'{{name}}'}</code> <code style={{ color: 'var(--accent)', background: 'var(--accent-bg)', padding: '1px 5px', borderRadius: 3 }}>{'{{first_name}}'}</code> <code style={{ color: 'var(--accent)', background: 'var(--accent-bg)', padding: '1px 5px', borderRadius: 3 }}>{'{{company}}'}</code>
               </span>
             </label>
-            <input className="input" value={form.subject} onChange={e => set('subject', e.target.value)} placeholder="e.g.  Hello {{name}}, here's your update" />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="input" value={form.subject} onChange={e => set('subject', e.target.value)} placeholder="e.g.  Hello {{name}}, here's your update" />
+              {aiReady && (
+                <button className="btn btn-ghost" style={{ whiteSpace: 'nowrap' }} disabled={subjectIdeas === 'loading'} onClick={suggestSubjects}
+                  title="Suggest subject lines based on the email body">
+                  <Sparkles size={14} className={subjectIdeas === 'loading' ? 'spin' : ''} /> {subjectIdeas === 'loading' ? 'Thinking…' : 'Suggest'}
+                </button>
+              )}
+            </div>
+            {Array.isArray(subjectIdeas) && (
+              <div style={{ marginTop: 6, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg3)', padding: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-dim)', padding: '2px 6px 6px' }}>
+                  <span>Click to use as the subject, or "B" to A/B test it</span>
+                  <button onClick={() => setSubjectIdeas(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}><X size={12} /></button>
+                </div>
+                {subjectIdeas.map((o, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 6px', borderRadius: 4 }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bg2)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => { set('subject', o.subject); setSubjectIdeas(null) }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-h)' }}>{o.subject}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{o.reason}</div>
+                    </div>
+                    <button className="btn btn-ghost btn-sm" title="Use as subject B (A/B test)" onClick={() => { set('ab_subject_b', o.subject); toast.success('Set as subject B') }}>B</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="form-row">
             <div className="form-group"><label>From Name</label><input className="input" value={form.from_name} onChange={e => set('from_name', e.target.value)} placeholder="Your Company" /></div>
@@ -286,7 +396,7 @@ function CampaignEditor({ camp, onSave, onCancel }) {
 
           <div className="form-group">
             <label>Email Body <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>— {'{{name}}'}, {'{{email}}'}, {'{{first_name}}'}, {'{{unsubscribe}}'}{customTags.length > 0 && `, +${customTags.length} from CSV`}</span></label>
-            <RichEditor value={form.html} onChange={v => set('html', v)} customTags={customTags} />
+            <RichEditor value={form.html} onChange={v => set('html', v)} customTags={customTags} aiReady={aiReady} />
           </div>
           <div className="form-group">
             <label>Plain Text (fallback)</label>
@@ -345,6 +455,7 @@ function SendPanel({ campaign, onDone }) {
   const [previewEmail, setPreviewEmail] = useState('')
   const [scheduleMode, setScheduleMode] = useState(false)
   const [scheduleTime, setScheduleTime] = useState('')
+  const [scheduledAt, setScheduledAt]   = useState(campaign.scheduled_at || null)
   const [smartMode, setSmartMode]       = useState(false)
   const [smartLocalTime, setSmartLocalTime] = useState('09:00')
   const [smartResult, setSmartResult]   = useState(null)
@@ -389,8 +500,30 @@ function SendPanel({ campaign, onDone }) {
   const scheduleSend = async () => {
     if (!scheduleTime) { toast.error('Pick a date and time'); return }
     const r = await window.api.campaigns.schedule({ campaign_id: campaign.id, send_at: scheduleTime })
-    r.ok ? toast.success(`Scheduled for ${new Date(scheduleTime).toLocaleString()}`) : toast.error(r.error)
-    setScheduleMode(false)
+    if (r.ok) {
+      toast.success(`Scheduled for ${new Date(scheduleTime).toLocaleString()}`)
+      setScheduledAt(scheduleTime)
+      setScheduleMode(false)
+    } else {
+      toast.error(r.error)
+    }
+  }
+
+  const editSchedule = () => {
+    // datetime-local input needs "YYYY-MM-DDTHH:mm" — trim any seconds/offset
+    setScheduleTime(scheduledAt ? scheduledAt.slice(0, 16) : '')
+    setScheduleMode(true)
+  }
+
+  const cancelScheduleSend = async () => {
+    const r = await window.api.campaigns.cancelSchedule(campaign.id)
+    if (r.ok) {
+      toast.success('Schedule cancelled')
+      setScheduledAt(null)
+      setScheduleMode(false)
+    } else {
+      toast.error(r.error || 'Could not cancel')
+    }
   }
 
   const stop = async () => {
@@ -444,13 +577,25 @@ function SendPanel({ campaign, onDone }) {
         {/* Schedule */}
         <div className="card">
           <h3 style={{ fontSize: 14, marginBottom: 12 }}>Schedule Send</h3>
-          {!scheduleMode ? (
+          {!scheduleMode && scheduledAt && (
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--accent)', background: 'var(--accent-bg)', borderRadius: 'var(--radius)', padding: '8px 10px', marginBottom: 8 }}>
+                Scheduled for {new Date(scheduledAt).toLocaleString()}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-ghost" onClick={editSchedule}><Clock size={14} /> Reschedule</button>
+                <button className="btn btn-ghost" onClick={cancelScheduleSend}><X size={14} /> Cancel schedule</button>
+              </div>
+            </div>
+          )}
+          {!scheduleMode && !scheduledAt && (
             <button className="btn btn-ghost" onClick={() => setScheduleMode(true)}><Calendar size={14} /> Schedule for later</button>
-          ) : (
+          )}
+          {scheduleMode && (
             <div>
               <input type="datetime-local" className="input" style={{ marginBottom: 8 }} value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} min={new Date().toISOString().slice(0,16)} />
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-primary" onClick={scheduleSend}><Clock size={14} /> Schedule</button>
+                <button className="btn btn-primary" onClick={scheduleSend}><Clock size={14} /> {scheduledAt ? 'Save new time' : 'Schedule'}</button>
                 <button className="btn btn-ghost" onClick={() => setScheduleMode(false)}>Cancel</button>
               </div>
             </div>

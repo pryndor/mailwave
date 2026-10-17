@@ -110,12 +110,55 @@ contextBridge.exposeInMainWorld('api', {
     save: (data) => invoke('automation:save', data),
   },
 
+  // Team Sync (GitHub)
+  team: {
+    status:           ()     => invoke('team:status'),
+    connect:          (tok)  => invoke('team:connect', tok),
+    deviceLoginStart: ()     => invoke('team:deviceLoginStart'),
+    deviceLoginWait:  ()     => invoke('team:deviceLoginWait'),
+    create:           (data) => invoke('team:create', data),
+    join:             (data) => invoke('team:join', data),
+    invite:           (user) => invoke('team:invite', user),
+    syncNow:          ()     => invoke('team:syncNow'),
+    leave:            ()     => invoke('team:leave'),
+    disconnect:       ()     => invoke('team:disconnect'),
+    startTrial:       ()     => invoke('team:startTrial'),
+  },
+
+  // Workspaces: main data vs. a separate test workspace
+  workspace: {
+    info:       ()     => invoke('workspace:info'),
+    createTest: (opts) => invoke('workspace:createTest', opts),
+    deleteTest: ()     => invoke('workspace:deleteTest'),
+    switchTo:   (name) => invoke('workspace:switch', name),
+  },
+
+  // AI writing & review (key stays in the main process)
+  ai: {
+    getConfig:  ()     => invoke('ai:getConfig'),
+    saveConfig: (data) => invoke('ai:saveConfig', data),
+    test:       ()     => invoke('ai:test'),
+    draft:      (brief) => invoke('ai:draft', brief),
+    followUp:   (opts) => invoke('ai:followUp', opts),
+    reply:      (opts) => invoke('ai:reply', opts),
+    subjects:   (opts) => invoke('ai:subjects', opts),
+    rewrite:    (opts) => invoke('ai:rewrite', opts),
+    review:     (camp) => invoke('ai:review', camp),
+  },
+
   // ── IPC event listeners ────────────────────────────────────────────────────
 
   // Real-time send progress
   onSendProgress: (cb) => {
     ipcRenderer.on('send:progress', (_, data) => cb(data));
     return () => ipcRenderer.removeAllListeners('send:progress');
+  },
+
+  // Teammates' changes arrived via Team Sync — pages can reload their data
+  onTeamChanged: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('team:changed', handler);
+    return () => ipcRenderer.removeListener('team:changed', handler);
   },
 
   // Notification bell — fires whenever a new notification is created

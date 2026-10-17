@@ -404,6 +404,18 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
   const [loading, setLoading] = useState(false)
   const fileRef = useRef()
 
+  const handleDownloadTemplate = () => {
+    const csv = Papa.unparse({
+      fields: ['email', 'name', 'first_name', 'last_name', 'phone', 'company'],
+      data: [['jane@example.com', 'Jane Doe', 'Jane', 'Doe', '+1 555 123 4567', 'Acme Inc']]
+    })
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url; a.download = 'contacts_template.csv'; a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handleFile = (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -435,9 +447,17 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
     <div className="modal-overlay">
       <div className="modal" style={{ maxWidth: 380 }}>
         <h3 style={{ marginBottom: 4 }}>Import CSV</h3>
-        <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 16 }}>
+        <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
           Optionally assign all imported contacts to a group.
         </p>
+
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={handleDownloadTemplate}
+          style={{ marginBottom: 16 }}
+        >
+          <Download size={12} /> Download sample template (.csv)
+        </button>
 
         <div className="form-group">
           <label>Assign to group</label>

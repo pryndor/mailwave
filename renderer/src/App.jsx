@@ -7,7 +7,7 @@ import Campaigns from './pages/Campaigns.jsx'
 import Templates from './pages/Templates.jsx'
 import History from './pages/History.jsx'
 import Settings from './pages/Settings.jsx'
-import { Toaster } from 'react-hot-toast'
+import toast, { Toaster } from 'react-hot-toast'
 
 export default function App() {
   const [page, setPage]             = useState('dashboard')
@@ -22,14 +22,25 @@ export default function App() {
     return unsub
   }, [])
 
+  // Teammates' changes arrived via Team Sync. Read-only pages remount to show them.
+  // Editing pages keep their state so an open form isn't wiped, and a toast tells the user.
+  const [teamVersion, setTeamVersion] = useState(0)
+  useEffect(() => window.api.onTeamChanged(() => {
+    setTeamVersion(v => v + 1)
+    toast('Teammates\' changes synced', { id: 'team-changed' })
+  }), [])
+
+  const [workspace, setWorkspace] = useState('main')
+  useEffect(() => { window.api.workspace.info().then(w => setWorkspace(w.current)) }, [])
+
   const handleMarkRead = () => setUnreadCount(0)
 
   const pages = {
-    dashboard:   <Dashboard onNavigate={setPage} />,
+    dashboard:   <Dashboard key={teamVersion} onNavigate={setPage} />,
     subscribers: <Subscribers />,
     campaigns:   <Campaigns />,
     templates:   <Templates />,
-    history:     <History />,
+    history:     <History key={teamVersion} />,
     settings:    <Settings />,
   }
 
@@ -47,6 +58,12 @@ export default function App() {
       />
 
       <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        {workspace === 'test' && (
+          <div style={{ background: 'rgba(224,160,32,0.12)', borderBottom: '1px solid rgba(224,160,32,0.35)', color: '#e0a020', fontSize: 12, padding: '6px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span><strong>Test workspace</strong>: separate data, emails sent here are still real</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setPage('settings')}>Switch back in Settings</button>
+          </div>
+        )}
         {pages[page] || pages.dashboard}
       </main>
 

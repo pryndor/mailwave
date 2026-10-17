@@ -1,8 +1,8 @@
 const Database = require('better-sqlite3');
 const path     = require('path');
-const { app }  = require('electron');
+const workspace = require('./workspace');
 
-const dbPath = path.join(app.getPath('userData'), 'mailwave.db');
+const dbPath = path.join(workspace.dataDir(), 'mailwave.db');
 const db = new Database(dbPath);
 
 // Enable WAL for performance
@@ -100,6 +100,45 @@ db.exec(`
     campaign_id INTEGER,
     read        INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
+// ── Team sync columns/tables ─────────────────────────────────────────────────
+// uid = stable cross-device id (local integer ids differ per machine).
+// origin_device = which teammate's machine logged a send; NULL = this machine.
+// Runs after the schema block so fresh installs get the columns too.
+for (const t of ['subscribers', 'groups', 'templates', 'campaigns', 'send_history']) {
+  try { db.exec(`ALTER TABLE ${t} ADD COLUMN uid TEXT`); } catch {}
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${t}_uid ON ${t}(uid) WHERE uid IS NOT NULL`);
+}
+try { db.exec(`ALTER TABLE send_history ADD COLUMN origin_device TEXT`); } catch {}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sync_state (
+    entity TEXT    NOT NULL,
+    uid    TEXT    NOT NULL,
+    hash   TEXT    NOT NULL,           -- hash of last synced version, or 'deleted'
+    ts     INTEGER NOT NULL,           -- logical clock of last write (last-writer-wins)
+    dev    TEXT    NOT NULL,
+    PRIMARY KEY (entity, uid)
+  );
+  CREATE TABLE IF NOT EXISTS sync_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  );
+`);
+
+// ── AI call log (metadata only — no prompt or output content is stored) ───────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ai_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature       TEXT    NOT NULL,
+    model         TEXT    NOT NULL,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    ms            INTEGER NOT NULL DEFAULT 0,
+    ok            INTEGER NOT NULL DEFAULT 1,
+    error         TEXT    DEFAULT '',
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
   );
 `);
 
@@ -482,7 +521,7 @@ function unsubscribeByEmail(email) {
 // ── Daily send tracking ───────────────────────────────────────────────────────
 function getTodaySentCount() {
   return db.prepare(
-    "SELECT COUNT(*) as c FROM send_history WHERE status='sent' AND date(sent_at,'localtime')=date('now','localtime')"
+    "SELECT COUNT(*) as c FROM send_history WHERE status='sent' AND origin_device IS NULL AND date(sent_at,'localtime')=date('now','localtime')"
   ).get().c;
 }
 
@@ -534,7 +573,41 @@ function getUnreadNotificationCount() {
   return db.prepare('SELECT COUNT(*) as c FROM notifications WHERE read=0').get().c;
 }
 
+// ── AI ────────────────────────────────────────────────────────────────────────
+function logAiCall({ feature, model, input_tokens = 0, output_tokens = 0, ms = 0, ok = true, error = '' }) {
+  db.prepare(`
+    INSERT INTO ai_log (feature, model, input_tokens, output_tokens, ms, ok, error)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(feature, model, input_tokens, output_tokens, ms, ok ? 1 : 0, error || '');
+}
+
+function aiUsageThisMonth() {
+  return db.prepare(`
+    SELECT COUNT(*) AS calls,
+           COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+           COALESCE(SUM(output_tokens), 0) AS output_tokens,
+           COALESCE(SUM(ok = 0), 0)        AS failed
+    FROM ai_log WHERE created_at >= strftime('%Y-%m-01', 'now')
+  `).get();
+}
+
+// Aggregate send results for one campaign — counts and error messages only,
+// no addresses, so it's safe to hand to the AI follow-up writer.
+function campaignSendSummary(campaign_id) {
+  const counts = db.prepare(`
+    SELECT COALESCE(SUM(status = 'sent'), 0) AS sent, COALESCE(SUM(status != 'sent'), 0) AS failed
+    FROM send_history WHERE campaign_id = ?
+  `).get(campaign_id);
+  const topErrors = db.prepare(`
+    SELECT error, COUNT(*) AS count FROM send_history
+    WHERE campaign_id = ? AND status != 'sent' AND error != ''
+    GROUP BY error ORDER BY count DESC LIMIT 5
+  `).all(campaign_id);
+  return { ...counts, topErrors };
+}
+
 module.exports = {
+  handle: db,   // raw connection for teamStore.js
   listSubscribers, addSubscriber, updateSubscriber, deleteSubscribers,
   importSubscribers, exportSubscribers, subscriberStats, listCustomFieldKeys,
   listGroups, addGroup, deleteGroup, assignGroup,
@@ -547,4 +620,6 @@ module.exports = {
   getPausedCampaigns, getPausedCampaignsToResume,
   // Notifications
   addNotification, listNotifications, markAllNotificationsRead, getUnreadNotificationCount,
+  // AI
+  logAiCall, aiUsageThisMonth, campaignSendSummary,
 };

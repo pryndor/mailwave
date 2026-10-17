@@ -46,10 +46,14 @@ function createWindow() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, '../build/icon.png');
+  // Dedicated 8-bit tray icon — the 16-bit main app icon renders blank/invisible
+  // in some Linux tray hosts (e.g. XFCE's GTK-based systray), leaving an empty slot.
+  const iconPath = path.join(__dirname, '../build/tray-icon.png');
   const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon.isEmpty() ? icon : icon.resize({ width: 22, height: 22 }));
-  tray.setToolTip('MailWave — running in background');
+  tray.setToolTip(require('./workspace').current() === 'test'
+    ? 'MailWave (test workspace) — running in background'
+    : 'MailWave — running in background');
 
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Open MailWave', click: () => { mainWindow.show(); mainWindow.focus(); } },
@@ -147,17 +151,9 @@ function startScheduler() {
 
 // Re-arm scheduled sends that were pending when the app last closed/crashed.
 // scheduleCampaign() only sets an in-memory setTimeout — it doesn't survive a restart on its own.
+// Missed ones (time passed while closed) send immediately instead of silently dropping.
 function rearmScheduledCampaigns() {
-  const pending = db.listCampaigns().filter(c => c.scheduled_at && c.status !== 'sent' && c.status !== 'sending');
-  for (const c of pending) {
-    if (new Date(c.scheduled_at).getTime() <= Date.now()) {
-      // Missed while the app was closed — send immediately instead of silently dropping it.
-      mailer.sendCampaign({ campaign_id: c.id }, mainWindow);
-    } else {
-      mailer.scheduleCampaign({ campaign_id: c.id, send_at: c.scheduled_at }, mainWindow);
-    }
-  }
-  if (pending.length) console.log(`[Scheduler] Re-armed ${pending.length} pending scheduled campaign(s).`);
+  mailer.reconcileSchedules(mainWindow);
 }
 
 app.whenReady().then(() => {
@@ -166,6 +162,11 @@ app.whenReady().then(() => {
   startScheduler();
   rearmScheduledCampaigns();
   automation.start({ settings, db, mailer, mainWindow });
+  teamSync.setOnRemoteChange((counts) => {
+    mailer.reconcileSchedules(mainWindow);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('team:changed', counts);
+  });
+  teamSync.start();
   app.on('activate', () => {
     if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
     else createWindow();
@@ -178,6 +179,7 @@ app.on('window-all-closed', () => {
   if (!isQuitting) return;
   if (schedulerInterval) clearInterval(schedulerInterval);
   automation.stop();
+  teamSync.stop();
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -189,6 +191,15 @@ const mailer     = require('./mailer');
 const settings   = require('./settings');
 const automation = require('./automation-server');
 const license    = require('./license');
+const teamSync   = require('./teamSync');
+
+// Write handlers push to the team repo a few seconds later instead of waiting
+// for the next 60s sync tick. No-op when Team Sync is off.
+const withSync = (fn) => async (...args) => {
+  const result = await fn(...args);
+  teamSync.syncSoon();
+  return result;
+};
 
 // Automation API settings
 ipcMain.handle('automation:get', () => {
@@ -212,8 +223,12 @@ ipcMain.handle('startup:set', (_, enabled) => {
   return startupControl.setEnabled(enabled);
 });
 
-ipcMain.handle('settings:get',    () => settings.getAll());
-ipcMain.handle('settings:save',   (_, data) => settings.save(data));
+// team_* keys belong to Team Sync (managed via the team:* handlers) and ai_* keys
+// to the AI section (ai:* handlers): secrets never reach the renderer, and the
+// Settings form's stale copy can't overwrite them.
+const withoutSecretKeys = (obj) => Object.fromEntries(Object.entries(obj || {}).filter(([k]) => !k.startsWith('team_') && !k.startsWith('ai_')));
+ipcMain.handle('settings:get',    () => withoutSecretKeys(settings.getAll()));
+ipcMain.handle('settings:save',   (_, data) => settings.save(withoutSecretKeys(data)));
 
 // License
 ipcMain.handle('license:get', () => license.getStatus(settings.getAll().license_key));
@@ -235,37 +250,37 @@ ipcMain.handle('settings:test',   (_, data) => mailer.testConnection(data));
 
 // Subscribers — unlimited on every tier, no cap.
 ipcMain.handle('subscribers:list',   (_, opts) => db.listSubscribers(opts));
-ipcMain.handle('subscribers:add',    (_, sub)  => db.addSubscriber(sub));
-ipcMain.handle('subscribers:update', (_, sub)  => db.updateSubscriber(sub));
-ipcMain.handle('subscribers:delete', (_, ids)  => db.deleteSubscribers(ids));
-ipcMain.handle('subscribers:import', (_, rows, group_id) => db.importSubscribers(rows, group_id || null));
+ipcMain.handle('subscribers:add',    withSync((_, sub)  => db.addSubscriber(sub)));
+ipcMain.handle('subscribers:update', withSync((_, sub)  => db.updateSubscriber(sub)));
+ipcMain.handle('subscribers:delete', withSync((_, ids)  => db.deleteSubscribers(ids)));
+ipcMain.handle('subscribers:import', withSync((_, rows, group_id) => db.importSubscribers(rows, group_id || null)));
 ipcMain.handle('subscribers:export', ()        => db.exportSubscribers());
 ipcMain.handle('subscribers:stats',  ()        => db.subscriberStats());
 ipcMain.handle('subscribers:customFields', ()  => db.listCustomFieldKeys());
 
 // Groups
 ipcMain.handle('groups:list',   ()         => db.listGroups());
-ipcMain.handle('groups:add',    (_, name)  => db.addGroup(name));
-ipcMain.handle('groups:delete', (_, id)    => db.deleteGroup(id));
-ipcMain.handle('groups:assign', (_, data)  => db.assignGroup(data));
+ipcMain.handle('groups:add',    withSync((_, name)  => db.addGroup(name)));
+ipcMain.handle('groups:delete', withSync((_, id)    => db.deleteGroup(id)));
+ipcMain.handle('groups:assign', withSync((_, data)  => db.assignGroup(data)));
 
 // Templates
 ipcMain.handle('templates:list',   ()         => db.listTemplates());
-ipcMain.handle('templates:save',   (_, tpl)   => db.saveTemplate(tpl));
-ipcMain.handle('templates:delete', (_, id)    => db.deleteTemplate(id));
+ipcMain.handle('templates:save',   withSync((_, tpl)   => db.saveTemplate(tpl)));
+ipcMain.handle('templates:delete', withSync((_, id)    => db.deleteTemplate(id)));
 
 // Campaigns
 ipcMain.handle('campaigns:list',      ()         => db.listCampaigns());
 ipcMain.handle('campaigns:get',       (_, id)    => db.getCampaign(id));
-ipcMain.handle('campaigns:save',      (_, camp)  => db.saveCampaign(camp));
-ipcMain.handle('campaigns:delete',    (_, id)    => db.deleteCampaign(id));
+ipcMain.handle('campaigns:save',      withSync((_, camp)  => db.saveCampaign(camp)));
+ipcMain.handle('campaigns:delete',    withSync((_, id)    => db.deleteCampaign(id)));
 ipcMain.handle('campaigns:send',      (_, data)  => mailer.sendCampaign(data, mainWindow));
 ipcMain.handle('campaigns:stop',      (_, id)    => mailer.stopSending(id));
 ipcMain.handle('campaigns:resume',    (_, id)    => mailer.resumeCampaign(id, mainWindow));
-ipcMain.handle('campaigns:smartSchedule', (_, data) => {
+ipcMain.handle('campaigns:smartSchedule', withSync((_, data) => {
   const smartSchedule = require('./smartSchedule');
   return smartSchedule.smartScheduleByTimezone(data, mainWindow);
-});
+}));
 ipcMain.handle('campaigns:previewMerge', (_, { campaign, subscriber_id }) => {
   const subs = db.getActiveSubscribersForCampaign([]);
   const sub  = subscriber_id ? subs.find(s => s.id === subscriber_id) : subs[0];
@@ -277,8 +292,8 @@ ipcMain.handle('campaigns:previewMerge', (_, { campaign, subscriber_id }) => {
 ipcMain.handle('history:list', (_, opts) => db.listHistory(opts));
 
 // Scheduling
-ipcMain.handle('campaigns:schedule',            (_, data) => mailer.scheduleCampaign(data, mainWindow));
-ipcMain.handle('campaigns:cancelSchedule',      (_, id)   => mailer.cancelSchedule(id));
+ipcMain.handle('campaigns:schedule',            withSync((_, data) => mailer.scheduleCampaign(data, mainWindow)));
+ipcMain.handle('campaigns:cancelSchedule',      withSync((_, id)   => mailer.cancelSchedule(id)));
 ipcMain.handle('campaigns:listScheduled',       ()        => mailer.listScheduled());
 ipcMain.handle('campaigns:listScheduledDetails',()        => mailer.listScheduledDetails());
 
@@ -287,7 +302,7 @@ ipcMain.handle('dialog:openFile', async (_, opts) => dialog.showOpenDialog(mainW
 ipcMain.handle('dialog:saveFile', async (_, opts) => dialog.showSaveDialog(mainWindow, opts));
 
 // Duplicate campaign
-ipcMain.handle('campaigns:duplicate', (_, id) => db.duplicateCampaign(id));
+ipcMain.handle('campaigns:duplicate', withSync((_, id) => db.duplicateCampaign(id)));
 
 // FTP/SFTP sync
 const sync = require('./sync');
@@ -315,3 +330,65 @@ ipcMain.handle('daily:stats', () => {
     scheduled_campaigns: mailer.listScheduledDetails(),
   };
 });
+
+// Team Sync (shared data through a private GitHub repo)
+const github = require('./github');
+const teamCall = (fn) => async (...args) => {
+  try { return await fn(...args); }
+  catch (err) { return { ok: false, error: err.message, proRequired: !!err.proRequired }; }
+};
+ipcMain.handle('team:status',     () => teamSync.status());
+ipcMain.handle('team:connect',    teamCall((_, token) => teamSync.connect(token)));
+ipcMain.handle('team:create',     teamCall((_, data)  => teamSync.createTeam(data)));
+ipcMain.handle('team:join',       teamCall((_, data)  => teamSync.joinTeam(data)));
+ipcMain.handle('team:invite',     teamCall((_, user)  => teamSync.invite(user)));
+ipcMain.handle('team:syncNow',    teamCall(()         => teamSync.syncNow()));
+ipcMain.handle('team:leave',      teamCall(()         => teamSync.leave()));
+ipcMain.handle('team:disconnect', teamCall(()         => teamSync.disconnect()));
+// Device login: first call returns the code to show; second waits for approval.
+let pendingDeviceLogin = null;
+ipcMain.handle('team:deviceLoginStart', teamCall(async () => {
+  pendingDeviceLogin = await github.startDeviceFlow();
+  shell.openExternal(pendingDeviceLogin.verification_uri);
+  return { ok: true, user_code: pendingDeviceLogin.user_code, verification_uri: pendingDeviceLogin.verification_uri };
+}));
+ipcMain.handle('team:deviceLoginWait', teamCall(async () => {
+  if (!pendingDeviceLogin) throw new Error('No GitHub login in progress');
+  const { device_code, interval, expires_in } = pendingDeviceLogin;
+  const token = await github.pollDeviceFlow(device_code, interval, expires_in);
+  pendingDeviceLogin = null;
+  return teamSync.connect(token);
+}));
+
+// Workspaces (main / test) and the Team Sync trial
+const workspace = require('./workspace');
+const trial     = require('./trial');
+ipcMain.handle('workspace:info',       () => workspace.info());
+ipcMain.handle('workspace:createTest', teamCall((_, opts) => workspace.createTest(opts || {}, db.handle)));
+ipcMain.handle('workspace:deleteTest', teamCall(() => workspace.deleteTest()));
+// db.js/settings.js open their files once at startup, so switching = relaunch.
+ipcMain.handle('workspace:switch',     teamCall((_, name) => {
+  workspace.setNext(name);
+  isQuitting = true;
+  app.relaunch();
+  app.exit(0);
+  return { ok: true };
+}));
+ipcMain.handle('team:startTrial', () => {
+  const status = trial.start();
+  teamSync.start();
+  return { ok: true, trial: status };
+});
+
+// AI writing & review (electron/ai.js). All calls run here; the renderer only
+// ever sees results, never the API key.
+const ai = require('./ai');
+ipcMain.handle('ai:getConfig',  () => ai.getConfig());
+ipcMain.handle('ai:saveConfig', ai.handler((data) => ai.saveConfig(data)));
+ipcMain.handle('ai:test',       ai.handler(() => ai.testConnection()));
+ipcMain.handle('ai:draft',      ai.handler((brief) => ai.draft(brief)));
+ipcMain.handle('ai:followUp',   ai.handler((opts)  => ai.followUp(opts)));
+ipcMain.handle('ai:reply',      ai.handler((opts)  => ai.reply(opts)));
+ipcMain.handle('ai:subjects',   ai.handler((opts)  => ai.subjects(opts)));
+ipcMain.handle('ai:rewrite',    ai.handler((opts)  => ai.rewrite(opts)));
+ipcMain.handle('ai:review',     ai.handler((camp)  => ai.review(camp)));

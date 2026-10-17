@@ -8,10 +8,24 @@ import { Color } from '@tiptap/extension-color'
 import { useEffect, useState, useRef } from 'react'
 import {
   Bold, Italic, UnderlineIcon, Link2, AlignLeft, AlignCenter, AlignRight,
-  List, ListOrdered, Undo, Redo, Code, Tags
+  List, ListOrdered, Undo, Redo, Code, Tags, Sparkles
 } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 // All supported merge tags — must match the personalize() function in mailer.js
+// AI rewrite actions — keys must match REWRITE_ACTIONS in electron/aiPrompts.js
+const AI_ACTIONS = [
+  { id: 'grammar',    label: 'Fix grammar & spelling' },
+  { id: 'shorter',    label: 'Make shorter' },
+  { id: 'longer',     label: 'Make longer' },
+  { id: 'simplify',   label: 'Simplify' },
+  { id: 'friendlier', label: 'Friendlier' },
+  { id: 'formal',     label: 'More formal' },
+  { id: 'persuasive', label: 'More persuasive' },
+]
+
+const escapeHtml = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
 const MERGE_TAGS = [
   { tag: '{{name}}',        label: 'Name',        hint: 'Full display name' },
   { tag: '{{first_name}}',  label: 'First Name',  hint: 'First name only' },
@@ -21,9 +35,13 @@ const MERGE_TAGS = [
   { tag: '{{unsubscribe}}', label: 'Unsubscribe', hint: 'Unsubscribe link URL' },
 ]
 
-export default function RichEditor({ value, onChange, customTags = [] }) {
+export default function RichEditor({ value, onChange, customTags = [], aiReady = false }) {
   const [showMergeTags, setShowMergeTags] = useState(false)
+  const [showAi, setShowAi] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiCustom, setAiCustom] = useState('')
   const mergeRef = useRef(null)
+  const aiRef = useRef(null)
   const allTags = [
     ...MERGE_TAGS,
     ...customTags.map(key => ({ tag: `{{${key}}}`, label: key, hint: 'From imported CSV' })),
@@ -54,6 +72,9 @@ export default function RichEditor({ value, onChange, customTags = [] }) {
       if (mergeRef.current && !mergeRef.current.contains(e.target)) {
         setShowMergeTags(false)
       }
+      if (aiRef.current && !aiRef.current.contains(e.target)) {
+        setShowAi(false)
+      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -80,6 +101,24 @@ export default function RichEditor({ value, onChange, customTags = [] }) {
     setShowMergeTags(false)
   }
 
+  // Rewrites the selected text in place. Lands as a normal editor change, so
+  // Undo (toolbar or Ctrl+Z) restores the original.
+  const aiRewrite = async (action) => {
+    const { from, to } = editor.state.selection
+    const text = editor.state.doc.textBetween(from, to, '\n\n')
+    if (!text.trim()) { toast.error('Select the text you want to rewrite first'); return }
+    if (action === 'custom' && !aiCustom.trim()) { toast.error('Type how to rewrite it'); return }
+    setShowAi(false)
+    setAiBusy(true)
+    const r = await window.api.ai.rewrite({ text, action, custom: aiCustom })
+    setAiBusy(false)
+    if (!r.ok) { toast.error(r.error); return }
+    const paras = r.text.split(/\n{2,}/).map(p => escapeHtml(p).replace(/\n/g, '<br>'))
+    const content = paras.length > 1 ? paras.map(p => `<p>${p}</p>`).join('') : paras[0]
+    editor.chain().focus().insertContentAt({ from, to }, content).run()
+    toast.success('Rewritten. Use Undo to go back')
+  }
+
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'visible' }}>
       {/* Toolbar */}
@@ -103,6 +142,54 @@ export default function RichEditor({ value, onChange, customTags = [] }) {
         {/* Color picker */}
         <input type="color" title="Text Color" onInput={e => editor.chain().focus().setColor(e.target.value).run()}
           style={{ width: 24, height: 24, padding: 1, border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: 4 }} />
+
+        {/* ── AI rewrite ── */}
+        {aiReady && (
+          <>
+            <div style={{ width: 1, background: 'var(--border)', margin: '0 4px' }} />
+            <div ref={aiRef} style={{ position: 'relative' }}>
+              <button
+                title="Rewrite the selected text with AI"
+                disabled={aiBusy}
+                onMouseDown={e => { e.preventDefault(); setShowAi(v => !v) }}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '4px 8px', border: 'none', borderRadius: 4, cursor: 'pointer',
+                  background: showAi ? 'var(--accent-bg)' : 'transparent',
+                  color: showAi || aiBusy ? 'var(--accent)' : 'var(--text)', fontSize: 12, fontWeight: 500,
+                }}
+              >
+                <Sparkles size={13} className={aiBusy ? 'spin' : ''} /> {aiBusy ? 'Rewriting…' : 'AI Rewrite'}
+              </button>
+              {showAi && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 100,
+                  background: 'var(--bg2)', border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)', boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                  minWidth: 230, padding: 6,
+                }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-dim)', padding: '4px 8px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Rewrite selected text
+                  </div>
+                  {AI_ACTIONS.map(a => (
+                    <button key={a.id}
+                      onMouseDown={e => { e.preventDefault(); aiRewrite(a.id) }}
+                      style={{ display: 'block', width: '100%', padding: '6px 10px', border: 'none', borderRadius: 4, background: 'transparent', cursor: 'pointer', textAlign: 'left', color: 'var(--text)', fontSize: 12 }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--bg3)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >{a.label}</button>
+                  ))}
+                  <div style={{ display: 'flex', gap: 4, padding: '6px 4px 2px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
+                    <input className="input" value={aiCustom} onChange={e => setAiCustom(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); aiRewrite('custom') } }}
+                      placeholder="Or say how, e.g. add a P.S." style={{ fontSize: 12, padding: '4px 8px' }} />
+                    <button className="btn btn-ghost btn-sm" onMouseDown={e => { e.preventDefault(); aiRewrite('custom') }}>Go</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         {/* ── Merge Tags ── */}
         <div style={{ width: 1, background: 'var(--border)', margin: '0 4px' }} />

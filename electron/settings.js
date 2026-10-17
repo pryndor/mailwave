@@ -1,8 +1,8 @@
-const { app } = require('electron');
-const path    = require('path');
-const fs      = require('fs');
+const path      = require('path');
+const fs        = require('fs');
+const workspace = require('./workspace');
 
-const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+const settingsPath = path.join(workspace.dataDir(), 'settings.json');
 
 const DEFAULTS = {
   smtp_host:       '',
@@ -42,6 +42,18 @@ const DEFAULTS = {
   automation_enabled: false,
   automation_port:    8787,
   automation_token:   '',
+  // AI writing & review (electron/ai.js). ai_api_key is sealed (secrets.js)
+  // and never sent to the renderer — see main.js withoutSecretKeys().
+  ai_enabled:     false,
+  ai_provider:    'anthropic',          // anthropic | mock (dev, no key needed)
+  ai_api_key:     '',
+  ai_model_fast:  'claude-haiku-5-5',   // subject lines, rewrites
+  ai_model_smart: 'claude-sonnet-5-5',  // full drafts, follow-ups, review
+  // Brand voice, injected into every writing prompt
+  ai_brand_about:   '',
+  ai_brand_tone:    'friendly',
+  ai_brand_avoid:   '',
+  ai_brand_signoff: '',
 };
 
 function getAll() {
