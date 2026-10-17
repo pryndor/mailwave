@@ -10,10 +10,7 @@ const db       = require('./db');
 const license  = require('./license');
 const { seal, unseal } = require('./secrets');
 const P        = require('./aiPrompts');
-
-class AiError extends Error {
-  constructor(message, code) { super(message); this.code = code; }
-}
+const { AiError, PROVIDERS, detectProvider, compatModels, pickModel, chatCompat } = require('./aiProviders');
 
 let client = null;
 let clientKey = '';
@@ -56,12 +53,31 @@ async function complete({ feature, tier = 'fast', system, user, schema, maxToken
   const cfg = settings.getAll();
   if (!cfg.ai_enabled) throw new AiError('AI features are turned off. Enable them in Settings → AI.', 'disabled');
 
-  if (cfg.ai_provider === 'mock') return mockResponse(feature);
+  const provider = cfg.ai_provider;
+  if (provider === 'mock') return mockResponse(feature);
+  if (!PROVIDERS[provider]) throw new AiError('No AI provider set up. Add an API key in Settings → AI.', 'no_key');
 
-  const key = unseal(cfg.ai_api_key);
-  if (!key) throw new AiError('No AI API key set. Add one in Settings → AI.', 'no_key');
+  const key = PROVIDERS[provider].noKey ? '' : unseal(cfg.ai_api_key);
+  if (!key && !PROVIDERS[provider].noKey && provider !== 'custom') {
+    throw new AiError('No AI API key set. Add one in Settings → AI.', 'no_key');
+  }
 
   const model = tier === 'smart' ? cfg.ai_model_smart : cfg.ai_model_fast;
+  const started = Date.now();
+  const log = (extra) => db.logAiCall({ feature, model: `${provider}:${model}`, ms: Date.now() - started, ...extra });
+
+  if (provider !== 'anthropic') {
+    try {
+      const { result, usage } = await chatCompat({ provider, key, baseUrl: cfg.ai_base_url, model, system, user, schema, maxTokens });
+      log({ ...usage, ok: true });
+      return result;
+    } catch (err) {
+      const e = friendlyError(err);
+      log({ ...(err.usage || {}), ok: false, error: e.message });
+      throw e;
+    }
+  }
+
   const params = {
     model,
     max_tokens: maxTokens,
@@ -73,8 +89,6 @@ async function complete({ feature, tier = 'fast', system, user, schema, maxToken
   if (schema) outputConfig.format = { type: 'json_schema', schema };
   if (Object.keys(outputConfig).length) params.output_config = outputConfig;
 
-  const started = Date.now();
-  const log = (extra) => db.logAiCall({ feature, model, ms: Date.now() - started, ...extra });
   let response;
   try {
     const c = getClient(key);
@@ -303,12 +317,17 @@ async function review({ subject = '', ab_subject_b = '', html = '', text = '' } 
 // ── Settings ──────────────────────────────────────────────────────────────────
 function getConfig() {
   const cfg = settings.getAll();
+  const def = PROVIDERS[cfg.ai_provider] || {};
   return {
     enabled:     cfg.ai_enabled,
     provider:    cfg.ai_provider,
+    providerLabel: def.label || cfg.ai_provider,
     hasKey:      !!unseal(cfg.ai_api_key),
+    needsKey:    !def.noKey && cfg.ai_provider !== 'custom',
+    base_url:    cfg.ai_base_url || def.base || '',
     model_fast:  cfg.ai_model_fast,
     model_smart: cfg.ai_model_smart,
+    providers:   Object.entries(PROVIDERS).map(([id, p]) => ({ id, label: p.label, base: p.base || '', local: !!p.local, noKey: !!p.noKey })),
     brand_about:   cfg.ai_brand_about,
     brand_tone:    cfg.ai_brand_tone,
     brand_avoid:   cfg.ai_brand_avoid,
@@ -318,32 +337,99 @@ function getConfig() {
   };
 }
 
-// api_key: undefined = keep, '' = remove, string = replace.
-function saveConfig(data = {}) {
-  const map = {
-    enabled: 'ai_enabled', provider: 'ai_provider', model_fast: 'ai_model_fast', model_smart: 'ai_model_smart',
-    brand_about: 'ai_brand_about', brand_tone: 'ai_brand_tone', brand_avoid: 'ai_brand_avoid', brand_signoff: 'ai_brand_signoff',
-  };
+// Live model ids for a provider (the saved one unless another is given, e.g.
+// Ollama before it is saved). Empty array when the provider has no list.
+async function listModels({ provider, base_url, api_key } = {}) {
+  const cfg = settings.getAll();
+  provider = provider || cfg.ai_provider;
+  if (provider === 'mock') return [];
+  const key = PROVIDERS[provider]?.noKey ? ''
+    : api_key?.trim() || (provider === cfg.ai_provider ? unseal(cfg.ai_api_key) : '');
+  if (provider === 'anthropic') {
+    if (!key) return [];
+    const ids = [];
+    for await (const m of getClient(key).models.list()) ids.push(m.id);
+    return ids;
+  }
+  return compatModels(provider, key, base_url ?? (provider === cfg.ai_provider ? cfg.ai_base_url : ''));
+}
+
+// The renderer sends one API key; the provider is detected from it unless
+// one is picked under Advanced. api_key: undefined = keep, '' = remove.
+//   provider: 'auto' | a PROVIDERS id | undefined (keep)
+async function saveConfig(data = {}) {
+  const cfg = settings.getAll();
   const update = {};
+  const map = {
+    enabled: 'ai_enabled', brand_about: 'ai_brand_about', brand_tone: 'ai_brand_tone',
+    brand_avoid: 'ai_brand_avoid', brand_signoff: 'ai_brand_signoff',
+  };
   for (const [k, sk] of Object.entries(map)) if (data[k] !== undefined) update[sk] = data[k];
-  if (typeof update.ai_model_fast === 'string')  update.ai_model_fast  = update.ai_model_fast.trim()  || 'claude-haiku-5-5';
-  if (typeof update.ai_model_smart === 'string') update.ai_model_smart = update.ai_model_smart.trim() || 'claude-sonnet-5-5';
-  if (typeof data.api_key === 'string') update.ai_api_key = seal(data.api_key.trim());
+
+  const newKey = typeof data.api_key === 'string' ? data.api_key.trim() : undefined;
+  let provider = data.provider && data.provider !== 'auto' ? data.provider : cfg.ai_provider;
+  if (newKey && (data.provider === 'auto' || data.provider === undefined)) {
+    provider = await detectProvider(newKey);
+  }
+  if (!PROVIDERS[provider]) throw new AiError('Unknown AI provider.', 'input');
+  // A stored key belongs to the provider it was saved for: never carry it
+  // over to another provider (or a custom server) after a switch.
+  if (newKey !== undefined) update.ai_api_key = newKey ? seal(newKey) : '';
+  else if (provider !== cfg.ai_provider) update.ai_api_key = '';
+  update.ai_provider = provider;
+
+  const def = PROVIDERS[provider];
+  if (data.base_url !== undefined) update.ai_base_url = def.base && data.base_url.trim() === def.base ? '' : data.base_url.trim();
+  else if (provider !== cfg.ai_provider) update.ai_base_url = '';
+
+  // Models: what the user picked, else the stored ones, else the provider's
+  // defaults. After a provider change, a picked model is kept only if the
+  // new provider actually offers it (the form may still hold the old names).
+  const changed = provider !== cfg.ai_provider;
+  const want = (tier) => {
+    const typed = data[`model_${tier}`]?.trim();
+    const stored = changed ? '' : cfg[`ai_model_${tier}`];
+    return { typed, fallback: stored || def[tier] };
+  };
+  const choose = (tier, models) => {
+    const { typed, fallback } = want(tier);
+    if (!models.length) return typed || fallback;
+    if (typed && models.includes(typed)) return typed;
+    return pickModel(models, changed ? fallback : (typed || fallback), tier);
+  };
+
+  let warning = '';
+  let models = [];
   settings.save(update);
-  return { ok: true, config: getConfig() };
+  if (provider !== 'mock') {
+    try {
+      models = await listModels({});
+      if (!models.length && provider === 'ollama') warning = 'Ollama has no models installed. Run e.g. "ollama pull llama3.2" first.';
+    } catch (err) {
+      warning = `Saved, but could not check the model list: ${friendlyError(err).message}`;
+    }
+  }
+  const fast = choose('fast', models);
+  const smart = choose('smart', models);
+  settings.save({ ai_model_fast: fast || '', ai_model_smart: smart || fast || '' });
+  return { ok: true, config: getConfig(), detected: changed ? def.label : null, warning };
 }
 
 // Checks the key and both model names without generating anything (free).
 async function testConnection() {
   const cfg = settings.getAll();
   if (cfg.ai_provider === 'mock') return { ok: true, message: 'Mock provider: no network call made.' };
-  const key = unseal(cfg.ai_api_key);
-  if (!key) throw new AiError('No AI API key set.', 'no_key');
+  const def = PROVIDERS[cfg.ai_provider];
+  if (!def) throw new AiError('No AI provider set up.', 'no_key');
+  if (!def.noKey && cfg.ai_provider !== 'custom' && !unseal(cfg.ai_api_key)) throw new AiError('No AI API key set.', 'no_key');
   try {
-    const c = getClient(key);
-    const models = [...new Set([cfg.ai_model_fast, cfg.ai_model_smart])];
-    const found = await Promise.all(models.map(m => c.models.retrieve(m)));
-    return { ok: true, message: `Connected. Models available: ${found.map(m => m.display_name || m.id).join(', ')}.` };
+    const models = await listModels({});
+    const wanted = [...new Set([cfg.ai_model_fast, cfg.ai_model_smart])].filter(Boolean);
+    const missing = models.length ? wanted.filter(m => !models.includes(m)) : [];
+    if (missing.length) {
+      return { ok: false, error: `Connected to ${def.label}, but it doesn't offer: ${missing.join(', ')}. Pick another model under Advanced.` };
+    }
+    return { ok: true, message: `Connected to ${def.label}. Using ${wanted.join(' + ')}.` };
   } catch (err) {
     throw friendlyError(err);
   }
@@ -388,6 +474,6 @@ const handler = (fn) => async (_, arg) => {
 
 module.exports = {
   complete, draft, followUp, reply, subjects, rewrite, review,
-  getConfig, saveConfig, testConnection, handler, AiError,
+  getConfig, saveConfig, listModels, testConnection, handler, AiError,
   FOLLOW_UP_ANGLES: Object.keys(FOLLOW_UP_ANGLES),
 };

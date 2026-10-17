@@ -1,45 +1,88 @@
 import { useEffect, useState } from 'react'
-import { Sparkles, Wifi, Check, Lock } from 'lucide-react'
+import { Sparkles, Wifi, Check, Lock, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const h3Style = { fontSize: 14, color: 'var(--text-h)', marginBottom: 4, paddingBottom: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }
 const dim = { fontSize: 12, color: 'var(--text-dim)' }
 
+// Providers picked explicitly rather than detected from a key.
+const MANUAL = ['ollama', 'custom', 'mock']
+
 // AI writing & review settings. Saved through ai:saveConfig (not the main
 // Settings form) so the API key is written in the main process, sealed, and
 // never read back into the renderer.
+//
+// One key field: the main process detects the provider (Claude, OpenAI,
+// Gemini, Groq, Grok, Mistral, DeepSeek, OpenRouter) from the key and picks
+// models. Ollama, custom endpoints and model overrides live under Advanced.
 export default function AISettings() {
   const [cfg, setCfg]     = useState(null)
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy]   = useState(false)
   const [testMsg, setTestMsg] = useState(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [choice, setChoice] = useState('auto')   // 'auto' or a provider id
+  const [models, setModels] = useState([])
+  const [loadingModels, setLoadingModels] = useState(false)
 
-  const load = () => window.api.ai.getConfig().then(setCfg)
-  useEffect(() => { load() }, [])
+  const apply = (c) => {
+    setCfg(c)
+    setChoice(MANUAL.includes(c.provider) ? c.provider : 'auto')
+    if (MANUAL.includes(c.provider) && c.provider !== 'mock') setShowAdvanced(true)
+  }
+  useEffect(() => { window.api.ai.getConfig().then(apply) }, [])
   if (!cfg) return null
 
   const set = (k, v) => { setCfg(c => ({ ...c, [k]: v })); setTestMsg(null) }
+  const chosen = cfg.providers.find(p => p.id === choice)
+  const isManual = MANUAL.includes(choice)
+  const showKey = !chosen?.noKey
+
+  const pickProvider = (id) => {
+    setChoice(id); setModels([]); setTestMsg(null)
+    const p = cfg.providers.find(x => x.id === id)
+    if (p?.local) set('base_url', id === cfg.provider ? cfg.base_url : p.base)
+  }
+
+  const loadModels = async () => {
+    setLoadingModels(true)
+    const r = await window.api.ai.listModels({
+      provider: choice === 'auto' ? cfg.provider : choice,
+      base_url: isManual ? cfg.base_url : undefined,
+      api_key: keyInput.trim() || undefined,
+    })
+    setLoadingModels(false)
+    if (!r.ok) { toast.error(r.error); return }
+    setModels(r.models)
+    if (!r.models.length) { toast.error('No models found'); return }
+    // Fill empty fields (fresh Ollama setup) with the first model
+    setCfg(c => ({ ...c, model_fast: c.model_fast || r.models[0], model_smart: c.model_smart || r.models[0] }))
+    toast.success(`${r.models.length} models found`)
+  }
 
   const save = async () => {
     setBusy(true)
     const data = {
-      enabled: cfg.enabled, provider: cfg.provider,
+      enabled: cfg.enabled, provider: choice,
       model_fast: cfg.model_fast, model_smart: cfg.model_smart,
       brand_about: cfg.brand_about, brand_tone: cfg.brand_tone,
       brand_avoid: cfg.brand_avoid, brand_signoff: cfg.brand_signoff,
     }
+    if (isManual && choice !== 'mock') data.base_url = cfg.base_url || ''
     if (keyInput.trim()) data.api_key = keyInput.trim()
     const r = await window.api.ai.saveConfig(data)
     setBusy(false)
     if (!r.ok) { toast.error(r.error); return }
     setKeyInput('')
-    setCfg(r.config)
-    toast.success('AI settings saved')
+    apply(r.config)
+    if (r.detected) toast.success(`${r.detected} connected: ${r.config.model_fast} + ${r.config.model_smart}`)
+    else toast.success('AI settings saved')
+    if (r.warning) toast(r.warning, { icon: '⚠️', duration: 7000 })
   }
 
   const removeKey = async () => {
     const r = await window.api.ai.saveConfig({ api_key: '' })
-    if (r.ok) { setCfg(r.config); toast.success('API key removed') }
+    if (r.ok) { apply(r.config); toast.success('API key removed') }
   }
 
   const test = async () => {
@@ -62,46 +105,89 @@ export default function AISettings() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '12px 0' }}>
         <div>
           <div style={{ fontSize: 13, color: 'var(--text-h)' }}>Enable AI features</div>
-          <div style={dim}>Uses your own Anthropic API key. You pay Anthropic directly for usage.</div>
+          <div style={dim}>Uses your own API key from any major AI provider, or a local Ollama model. You pay the provider directly.</div>
         </div>
         <Toggle checked={!!cfg.enabled} onChange={v => set('enabled', v)} />
       </div>
 
       {cfg.enabled && (
         <>
-          <div className="form-group">
-            <label>Provider</label>
-            <select className="select" value={cfg.provider} onChange={e => set('provider', e.target.value)}>
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="mock">Mock: sample output, no key, for testing</option>
-            </select>
-          </div>
+          {showKey && (
+            <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                API Key
+                {cfg.hasKey && !isManual && <span className="badge badge-green">{cfg.providerLabel}</span>}
+                {cfg.hasKey && isManual && <span className="badge badge-green">saved</span>}
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input className="input" type="password" value={keyInput} onChange={e => setKeyInput(e.target.value)}
+                  placeholder={cfg.hasKey ? 'Saved. Paste a new key to replace it' : choice === 'custom' ? 'Optional for this endpoint' : 'Paste any AI API key: Claude, OpenAI, Gemini, Groq, Grok, Mistral, DeepSeek, OpenRouter'} />
+                {cfg.hasKey && <button className="btn btn-ghost" onClick={removeKey}>Remove</button>}
+              </div>
+              <p style={{ ...dim, marginTop: 6 }}>
+                {choice === 'auto'
+                  ? 'The provider is recognised from the key and good models are chosen automatically. '
+                  : ''}
+                Stored encrypted in your OS keychain where available, and never synced through Team Sync.
+              </p>
+              {!cfg.hasKey && choice === 'auto' && (
+                <p style={{ ...dim, marginTop: 4 }}>No key? Use a free local model with Ollama under Advanced.</p>
+              )}
+            </div>
+          )}
+          {!showKey && (
+            <div style={{ ...dim, margin: '4px 0 12px' }}>Using <strong style={{ color: 'var(--text-h)' }}>{chosen?.label}</strong>, no key needed.</div>
+          )}
 
-          {cfg.provider === 'anthropic' && (
-            <>
+          <button className="btn btn-ghost btn-sm" style={{ marginBottom: 12 }} onClick={() => setShowAdvanced(v => !v)}>
+            {showAdvanced ? <ChevronUp size={12} /> : <ChevronDown size={12} />} Advanced: provider, local models, model names
+          </button>
+
+          {showAdvanced && (
+            <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 12, marginBottom: 14 }}>
               <div className="form-group">
-                <label>API Key {cfg.hasKey && <span className="badge badge-green" style={{ marginLeft: 6 }}>saved</span>}</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input className="input" type="password" value={keyInput} onChange={e => setKeyInput(e.target.value)}
-                    placeholder={cfg.hasKey ? 'Saved. Enter a new key to replace it' : 'sk-ant-...'} />
-                  {cfg.hasKey && <button className="btn btn-ghost" onClick={removeKey}>Remove</button>}
-                </div>
-                <p style={{ ...dim, marginTop: 6 }}>
-                  Get a key at console.anthropic.com. Stored encrypted in your OS keychain where available, and never synced through Team Sync.
-                </p>
+                <label>Provider</label>
+                <select className="select" value={choice} onChange={e => pickProvider(e.target.value)}>
+                  <option value="auto">Auto-detect from API key{!isManual && cfg.provider ? ` (now: ${cfg.providerLabel})` : ''}</option>
+                  {cfg.providers.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
               </div>
 
-              <div className="form-row">
+              {chosen?.local && (
                 <div className="form-group">
-                  <label>Fast model <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(subject lines, rewrites)</span></label>
-                  <input className="input" value={cfg.model_fast} onChange={e => set('model_fast', e.target.value)} placeholder="claude-haiku-5-5" />
+                  <label>Endpoint URL</label>
+                  <input className="input" value={cfg.base_url || ''} onChange={e => set('base_url', e.target.value)}
+                    placeholder={choice === 'ollama' ? 'http://localhost:11434/v1' : 'https://your-server/v1'} />
+                  <p style={{ ...dim, marginTop: 6 }}>
+                    {choice === 'ollama'
+                      ? 'Install Ollama (ollama.com), pull a model (e.g. "ollama pull llama3.2"), then press Load models. Runs fully on this computer.'
+                      : 'Any server with an OpenAI-compatible /chat/completions API: LM Studio, vLLM, LocalAI, Azure, Together, etc.'}
+                  </p>
                 </div>
-                <div className="form-group">
-                  <label>Smart model <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(drafts, replies, review)</span></label>
-                  <input className="input" value={cfg.model_smart} onChange={e => set('model_smart', e.target.value)} placeholder="claude-sonnet-5-5" />
-                </div>
-              </div>
-            </>
+              )}
+
+              {choice !== 'mock' && (
+                <>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Fast model <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(subject lines, rewrites)</span></label>
+                      <input className="input" list="ai-models" value={cfg.model_fast || ''} onChange={e => set('model_fast', e.target.value)} placeholder="auto" />
+                    </div>
+                    <div className="form-group">
+                      <label>Smart model <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(drafts, replies, review)</span></label>
+                      <input className="input" list="ai-models" value={cfg.model_smart || ''} onChange={e => set('model_smart', e.target.value)} placeholder="auto" />
+                    </div>
+                  </div>
+                  <datalist id="ai-models">{models.map(m => <option key={m} value={m} />)}</datalist>
+                  <button className="btn btn-ghost btn-sm" disabled={loadingModels} onClick={loadModels}>
+                    <RefreshCw size={12} className={loadingModels ? 'spin' : ''} /> {loadingModels ? 'Loading…' : 'Load models'}
+                  </button>
+                  <span style={{ ...dim, marginLeft: 8 }}>
+                    {models.length ? `${models.length} available: click a model field to pick one` : 'Lists the models your key or server offers'}
+                  </span>
+                </>
+              )}
+            </div>
           )}
 
           <div style={{ fontSize: 12, color: 'var(--text-h)', fontWeight: 600, margin: '16px 0 8px' }}>Brand voice <span style={{ ...dim, fontWeight: 400 }}>— used in every AI-written email</span></div>
@@ -131,7 +217,7 @@ export default function AISettings() {
           </div>
 
           <div style={{ ...dim, padding: '8px 10px', background: 'var(--bg3)', borderRadius: 'var(--radius)', marginBottom: 12 }}>
-            <strong style={{ color: 'var(--text-h)' }}>What is sent to the AI:</strong> the brief or text you write, the campaign subject and body,
+            <strong style={{ color: 'var(--text-h)' }}>What is sent to the AI provider{choice === 'ollama' ? ' (here: nothing leaves this computer)' : ''}:</strong> the brief or text you write, the campaign subject and body,
             and for follow-ups the delivered/failed counts. Subscriber emails, names and custom field values are never sent.
             Only call metadata (feature, tokens, time) is logged on this computer.
             {!cfg.pro && <div style={{ marginTop: 6 }}><Lock size={11} style={{ verticalAlign: -1 }} /> AI pre-send review is a Pro feature. Writing tools work on every plan.</div>}
@@ -147,7 +233,7 @@ export default function AISettings() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <button className="btn btn-primary" disabled={busy} onClick={save}><Check size={14} /> Save AI Settings</button>
         {cfg.enabled && (
-          <button className="btn btn-ghost" disabled={busy || (cfg.provider === 'anthropic' && !cfg.hasKey)} onClick={test}>
+          <button className="btn btn-ghost" disabled={busy || (cfg.needsKey && !cfg.hasKey)} onClick={test}>
             <Wifi size={14} /> Test AI connection
           </button>
         )}

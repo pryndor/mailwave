@@ -10,7 +10,7 @@ and the pre-send checklist (Pro), `ai_log` table. Tests: fake-API harness (not i
 Decisions taken: fast = `claude-haiku-5-5` (newer and ~10x cheaper than Haiku 4.5), smart =
 `claude-sonnet-5-5`; both editable in Settings. BYO key; writing free, review Pro. Requests to Sonnet 5.5
 use the server-side refusal fallback (`fallbacks: "default"`), since health/drug wording can trip safety
-classifiers. Still open: streaming, OpenAI/Ollama providers, preheader (needs a campaign field + mailer
+classifiers. Still open: streaming, preheader (needs a campaign field + mailer
 change), "send subscriber data" toggle (nothing in Phase 1 sends subscriber data).
 
 Goal: add AI to MailWave for (1) writing emails, (2) analysing emails before and after sending, and (3) a set of smaller AI helpers that fit the existing app (subscribers, smart schedule, Brevo stats, automation API).
@@ -24,7 +24,7 @@ Goal: add AI to MailWave for (1) writing emails, (2) analysing emails before and
 - [x] Default provider: Claude API (`@anthropic-ai/sdk`).
   - [ ] Quick tasks (subject lines, rewrite, classify): `claude-haiku-4-5-20251001`.
   - [ ] Long tasks (full drafts, campaign reports): `claude-sonnet-5-5`.
-- [ ] Optional providers behind the same interface: OpenAI-compatible endpoint, local Ollama (offline / privacy users).
+- [x] Optional providers behind the same interface: OpenAI-compatible endpoint, local Ollama (offline / privacy users). Done in `electron/aiProviders.js`: one key field, provider auto-detected from the key (Claude, OpenAI, Gemini, Groq, xAI, Mistral, DeepSeek, OpenRouter); Ollama / custom endpoint / model choice under Advanced.
 - [ ] Streaming support (`ai:stream` IPC + `webContents.send('ai:chunk')`) so drafts appear as they are written.
 - [x] Structured output helper (JSON schema / tool use) for the analysis features.
 - [x] Timeouts, retries on 429/5xx, clear error messages ("No API key", "Quota exceeded").

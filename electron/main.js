@@ -386,6 +386,7 @@ const ai = require('./ai');
 ipcMain.handle('ai:getConfig',  () => ai.getConfig());
 ipcMain.handle('ai:saveConfig', ai.handler((data) => ai.saveConfig(data)));
 ipcMain.handle('ai:test',       ai.handler(() => ai.testConnection()));
+ipcMain.handle('ai:listModels', ai.handler(async (opts) => ({ ok: true, models: await ai.listModels(opts) })));
 ipcMain.handle('ai:draft',      ai.handler((brief) => ai.draft(brief)));
 ipcMain.handle('ai:followUp',   ai.handler((opts)  => ai.followUp(opts)));
 ipcMain.handle('ai:reply',      ai.handler((opts)  => ai.reply(opts)));

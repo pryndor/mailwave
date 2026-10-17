@@ -19,7 +19,7 @@ Tools like Mailchimp or Brevo charge monthly per-subscriber fees and host your l
 - Local automation bridge (bearer-token authenticated, localhost-only) for triggering campaigns from n8n or cron
 - Optional Brevo API integration for account/credit stats
 - Desktop notifications (daily summary, campaign reminders, limit reached)
-- AI writing (optional, bring your own Anthropic API key): draft a campaign from a short brief, write a follow-up to a sent campaign, draft a reply to a message you received, suggest subject lines, and rewrite selected text. AI pre-send review (Pro) flags spam risk, mistakes, placeholder links and compliance issues
+- AI writing (optional, bring your own key from Claude, OpenAI, Gemini, Groq, Grok, Mistral, DeepSeek or OpenRouter, or run a local model with Ollama): draft a campaign from a short brief, write a follow-up to a sent campaign, draft a reply to a message you received, suggest subject lines, and rewrite selected text. AI pre-send review (Pro) flags spam risk, mistakes, placeholder links and compliance issues
 - Team Sync (Pro): several people share subscribers, campaigns, schedules and history through a private, end-to-end encrypted GitHub repo, with no server needed. Includes a free 7-day trial and a separate test workspace for trying it out. See [TEAM_SYNC.md](TEAM_SYNC.md)
 
 ## Install
@@ -64,9 +64,11 @@ MailWave adds a `List-Unsubscribe` mailto link to every campaign automatically (
 
 ### AI features (optional)
 
-Settings → **AI Writing & Review**: turn it on, paste an Anthropic API key (from console.anthropic.com), and optionally describe your brand voice. Usage is billed to your own Anthropic account; the Settings section shows this month's calls and tokens. Use the **Mock** provider to try the screens without a key.
+Settings → **AI Writing & Review**: turn it on and paste an API key from any supported provider. MailWave recognises the provider from the key and picks a fast and a smart model for you. Supported: Anthropic (Claude), OpenAI, Google Gemini, Groq, xAI (Grok), Mistral, DeepSeek and OpenRouter. Usage is billed to your own provider account; the Settings section shows this month's calls and tokens.
 
-What leaves your computer: the brief or text you write, the campaign subject and body, and for follow-ups the delivered/failed counts. Subscriber email addresses, names and custom field values are never sent. The key is stored encrypted with the OS keychain where available and is never synced through Team Sync. Only call metadata (feature, model, tokens, time) is logged locally, no email content. AI output is always shown to you first and can be undone; review results are advice and never block sending.
+Under **Advanced** you can instead use a local model with [Ollama](https://ollama.com) (no key, nothing leaves your computer), any OpenAI-compatible endpoint (LM Studio, vLLM, LocalAI…), choose specific models from the provider's live list, or pick **Mock** to try the screens without a key.
+
+What goes to the AI provider: the brief or text you write, the campaign subject and body, and for follow-ups the delivered/failed counts. Subscriber email addresses, names and custom field values are never sent. The key is stored encrypted with the OS keychain where available and is never synced through Team Sync. Only call metadata (feature, model, tokens, time) is logged locally, no email content. AI output is always shown to you first and can be undone; review results are advice and never block sending.
 
 ## Compliance note
 

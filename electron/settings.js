@@ -45,8 +45,9 @@ const DEFAULTS = {
   // AI writing & review (electron/ai.js). ai_api_key is sealed (secrets.js)
   // and never sent to the renderer — see main.js withoutSecretKeys().
   ai_enabled:     false,
-  ai_provider:    'anthropic',          // anthropic | mock (dev, no key needed)
+  ai_provider:    'anthropic',          // detected from the key; see aiProviders.js PROVIDERS
   ai_api_key:     '',
+  ai_base_url:    '',                   // only for ollama / custom (blank = provider default)
   ai_model_fast:  'claude-haiku-5-5',   // subject lines, rewrites
   ai_model_smart: 'claude-sonnet-5-5',  // full drafts, follow-ups, review
   // Brand voice, injected into every writing prompt

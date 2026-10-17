@@ -138,6 +138,7 @@ contextBridge.exposeInMainWorld('api', {
     getConfig:  ()     => invoke('ai:getConfig'),
     saveConfig: (data) => invoke('ai:saveConfig', data),
     test:       ()     => invoke('ai:test'),
+    listModels: (opts) => invoke('ai:listModels', opts),
     draft:      (brief) => invoke('ai:draft', brief),
     followUp:   (opts) => invoke('ai:followUp', opts),
     reply:      (opts) => invoke('ai:reply', opts),
