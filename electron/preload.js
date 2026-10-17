@@ -89,7 +89,7 @@ contextBridge.exposeInMainWorld('api', {
   brevo: {
     stats:           ()   => invoke('brevo:stats'),
     today:           ()   => invoke('brevo:today'),
-    campaignMetrics: (id) => invoke('brevo:campaignMetrics', id),
+    campaignMetrics: (id, variant) => invoke('brevo:campaignMetrics', id, variant),
   },
 
   // Notifications (in-app)

@@ -31,6 +31,7 @@ const DEFAULTS = {
   // Daily sending limit & auto-resume
   daily_send_limit:   300,
   daily_resume_time:  '09:00',
+  daily_limit_team_wide: false,   // Team Sync: count teammates' sends too (shared sending account)
   // Notifications
   notify_daily_summary:     true,
   notify_summary_time:      '08:00',

@@ -461,6 +461,22 @@ function duplicateCampaign(id) {
   return { id: r.lastInsertRowid };
 }
 
+// Campaign uid = the id teammates share (local integer ids differ per
+// machine). Team Sync assigns it on first sync; sending assigns it earlier if
+// needed, because the Brevo stats tag is built from it.
+function ensureCampaignUid(id) {
+  const row = db.prepare('SELECT uid FROM campaigns WHERE id = ?').get(id);
+  if (!row) return null;
+  if (row.uid) return row.uid;
+  const uid = require('crypto').randomUUID();
+  db.prepare('UPDATE campaigns SET uid = ? WHERE id = ? AND uid IS NULL').run(uid, id);
+  return db.prepare('SELECT uid FROM campaigns WHERE id = ?').get(id).uid;
+}
+
+function campaignSentHere(id) {
+  return !!db.prepare('SELECT 1 FROM send_history WHERE campaign_id = ? AND origin_device IS NULL LIMIT 1').get(id);
+}
+
 // ── Send history ──────────────────────────────────────────────────────────────
 function logSend({ campaign_id, subscriber_id, email, name, status, error }) {
   db.prepare(`
@@ -519,9 +535,12 @@ function unsubscribeByEmail(email) {
 }
 
 // ── Daily send tracking ───────────────────────────────────────────────────────
-function getTodaySentCount() {
+// Counts this device's sends by default (each person sends through their own
+// SMTP account). teamWide also counts teammates' sends synced in by Team
+// Sync, for teams that share one sending account and so one daily quota.
+function getTodaySentCount(teamWide = false) {
   return db.prepare(
-    "SELECT COUNT(*) as c FROM send_history WHERE status='sent' AND origin_device IS NULL AND date(sent_at,'localtime')=date('now','localtime')"
+    `SELECT COUNT(*) as c FROM send_history WHERE status='sent' ${teamWide ? '' : 'AND origin_device IS NULL'} AND date(sent_at,'localtime')=date('now','localtime')`
   ).get().c;
 }
 
@@ -613,6 +632,7 @@ module.exports = {
   listGroups, addGroup, deleteGroup, assignGroup,
   listTemplates, saveTemplate, deleteTemplate,
   listCampaigns, getCampaign, saveCampaign, deleteCampaign, duplicateCampaign,
+  ensureCampaignUid, campaignSentHere,
   listHistory, logSend, updateCampaignProgress,
   getActiveSubscribersForCampaign, unsubscribeByEmail,
   // Daily limit & resume

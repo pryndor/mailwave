@@ -67,7 +67,14 @@ This is the most important safety part.
 3. Each attempt has a `run_key` (`sched:<time>`, `resume:<time>` or `manual:<ms>`). A lock marked `done` for the same run_key stops a teammate whose timer fires late from sending the campaign again.
 4. The lock is a 15-minute lease, renewed every sync while sending. If a machine crashes mid-send, the lock expires on its own.
 5. **Fail closed:** if GitHub is unreachable, the send does **not** start. Scheduled and resume sends retry every 2 minutes (up to 15 times). A manual send shows the error.
-6. The daily send limit counts only this device's own sends (`origin_device IS NULL`), because each person sends through their own SMTP account.
+6. The daily send limit counts only this device's own sends (`origin_device IS NULL`), because each person sends through their own SMTP account. Teams that share **one** sending account (and so one provider quota, e.g. Brevo free = 300/day) turn on Settings → Daily Sending Limit → **Team shares one sending account** on every machine; the count then includes teammates' synced sends (up to ~1 minute behind).
+
+### Brevo stats in a team
+
+- The Brevo key is a per-device setting and never syncs. Each person enters their own (or the shared account's) key.
+- Sends are tagged `campaign-<uid>` (plus `-a` / `-b` for A/B), using the campaign's shared uid, so Metrics on any teammate's machine looks up the same tag. Before this, the tag used the local integer id, which differs per machine and could show another campaign's stats.
+- Campaigns sent before the change keep their old `campaign-<local id>` tag; Metrics tries that tag only on the machine that sent them.
+- Stats live in the Brevo account that sent the email. With separate accounts, each person sees only the campaigns their own account sent.
 
 ### Sync timing
 
@@ -172,11 +179,11 @@ The test script isn't committed. It lives in the session scratchpad and can be a
 3. **Compaction / snapshots.** Event files build up forever. Each device should periodically write a snapshot and old chunks should be pruned. Until then, the tarball download keeps first join fast.
 4. **Attachments** aren't uploaded. A teammate who sends a campaign with attachments sends it *without* them, because the file path doesn't exist on their machine. Fix: upload encrypted attachment blobs to `attachments/<hash>.mwe`.
 5. **Remote stop.** "Stop" only stops a send running on this machine. A `stop_requested` state in the lock file would let a teammate stop it.
-6. **Editing pages don't live-refresh.** Subscribers, Campaigns and Templates show a toast; the user switches page to see teammates' changes. Dashboard and History reload automatically. Refresh isn't automatic on editing pages to avoid wiping an open form.
+6. **Editing pages don't live-refresh.** Subscribers and Templates show a toast; the user switches page to see teammates' changes. Dashboard, History and the Campaigns list reload automatically (the Campaigns list only while no editor or send screen is open). Refresh isn't automatic elsewhere to avoid wiping an open form.
 7. **Rotating the passphrase or removing a member.** Removing someone from the GitHub repo cuts off their access to new data. They still hold the key and any data they already downloaded. Rotating means re-encrypting everything under a new key; there's no UI for it yet.
 8. **Per-field merge.** Conflicts resolve per record, not per field (see "Conflicts").
 9. **Roles.** Anyone with push access can edit or delete anything. There's no read-only member role; GitHub's read permission would work for pulling, but pushing edits would then fail.
-10. **SMTP identity.** Whichever device wins the lock sends through **its own** SMTP settings. Teams should use the same sender account, or agree who sends.
+10. **SMTP identity.** Whichever device wins the lock sends through **its own** SMTP settings. Teams should use the same sender account, or agree who sends. With separate accounts, the campaign's From address must be verified on every account (Brevo rejects unverified senders), or a scheduled send that fires on a teammate's machine fails.
 
 11. **Tamper-proof trial.** See the trial limitation above.
 12. **Both workspaces running at once.** Not supported: main-workspace schedules pause while you're in the test workspace.

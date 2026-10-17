@@ -14,8 +14,8 @@ export default function CampaignMetrics({ campaign, onClose }) {
     if (isAB) {
       // Fetch both variants separately
       const [rA, rB] = await Promise.all([
-        window.api.brevo.campaignMetrics(`${campaign.id}-a`),
-        window.api.brevo.campaignMetrics(`${campaign.id}-b`),
+        window.api.brevo.campaignMetrics(campaign.id, 'a'),
+        window.api.brevo.campaignMetrics(campaign.id, 'b'),
       ])
       if (rA.ok) setAbA(rA)
       if (rB.ok) setAbB(rB)

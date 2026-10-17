@@ -112,7 +112,7 @@ function startScheduler() {
         const minuteKey = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
         if (now.getHours() === sh && now.getMinutes() === sm && lastSummaryMinute !== minuteKey) {
           lastSummaryMinute = minuteKey;
-          const todaySent = db.getTodaySentCount();
+          const todaySent = db.getTodaySentCount(!!cfg.daily_limit_team_wide);
           const limit     = cfg.daily_send_limit || 300;
           const remaining = Math.max(0, limit - todaySent);
           const paused    = db.getPausedCampaigns();
@@ -313,7 +313,18 @@ const brevo = require('./brevo');
 
 ipcMain.handle('brevo:stats',           ()      => brevo.getAccountStats(settings.getAll().brevo_api_key));
 ipcMain.handle('brevo:today',           ()      => brevo.getTodayStats(settings.getAll().brevo_api_key));
-ipcMain.handle('brevo:campaignMetrics', (_, id) => brevo.getCampaignMetrics(settings.getAll().brevo_api_key, id));
+// Sends are tagged campaign-<uid>[-a|-b]. Campaigns sent before that change
+// were tagged with the local id, which only means something on the machine
+// that sent them, so that tag is tried only there.
+ipcMain.handle('brevo:campaignMetrics', (_, id, variant) => {
+  const camp = db.getCampaign(id);
+  if (!camp) return { ok: false, error: 'Campaign not found' };
+  const suffix = variant ? `-${variant}` : '';
+  const tags = [];
+  if (camp.uid) tags.push(`campaign-${camp.uid}${suffix}`);
+  if (db.campaignSentHere(id)) tags.push(`campaign-${id}${suffix}`);
+  return brevo.getCampaignMetrics(settings.getAll().brevo_api_key, tags);
+});
 
 // Notifications
 ipcMain.handle('notifications:list',        ()      => db.listNotifications());
@@ -324,7 +335,7 @@ ipcMain.handle('notifications:unreadCount', ()      => db.getUnreadNotificationC
 ipcMain.handle('daily:stats', () => {
   const cfg = settings.getAll();
   return {
-    sent_today:          db.getTodaySentCount(),
+    sent_today:          db.getTodaySentCount(!!cfg.daily_limit_team_wide),
     daily_limit:         cfg.daily_send_limit || 300,
     paused_campaigns:    db.getPausedCampaigns(),
     scheduled_campaigns: mailer.listScheduledDetails(),

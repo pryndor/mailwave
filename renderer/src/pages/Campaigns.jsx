@@ -19,6 +19,15 @@ export default function Campaigns() {
   const load = () => window.api.campaigns.list().then(setCampaigns)
   useEffect(() => { load() }, [])
 
+  // Teammates' changes (Team Sync): refresh the list, e.g. a campaign a
+  // teammate just sent shows as sent. Only while the list itself is showing —
+  // never under an open editor or send screen.
+  useEffect(() => {
+    if (editing !== null || sending) return
+    load()
+    return window.api.onTeamChanged(() => load())
+  }, [editing, sending])
+
   const del = async (id) => {
     if (!confirm('Delete campaign?')) return
     await window.api.campaigns.delete(id)

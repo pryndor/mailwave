@@ -51,14 +51,25 @@ async function getTodayStats(apiKey) {
   }
 }
 
-// Campaign-level metrics via Brevo tag
-async function getCampaignMetrics(apiKey, campaignId) {
+// Campaign-level metrics via Brevo tag. `tags` are tried in order and the
+// first with any sends wins (see main.js brevo:campaignMetrics).
+async function getCampaignMetrics(apiKey, tags) {
   if (!apiKey) return { ok: false, error: 'No API key' };
+  if (!tags.length) return { ok: true, ...EMPTY_METRICS };
+  let last;
+  for (const tag of tags) {
+    last = await getTagMetrics(apiKey, tag);
+    if (!last.ok || last.requests > 0) return last;
+  }
+  return last;
+}
+
+const EMPTY_METRICS = { requests: 0, delivered: 0, opens: 0, clicks: 0, bounces: 0, spam: 0, unsubscribed: 0, open_rate: 0, click_rate: 0, bounce_rate: 0 };
+
+async function getTagMetrics(apiKey, tag) {
   try {
-    const tag = `campaign-${campaignId}`;
-    // Aggregated stats for this campaign tag
     const res = await fetch(
-      `https://api.brevo.com/v3/smtp/statistics/aggregatedReport?tags=${tag}`,
+      `https://api.brevo.com/v3/smtp/statistics/aggregatedReport?tags=${encodeURIComponent(tag)}`,
       { headers: { 'api-key': apiKey, 'Accept': 'application/json' } }
     );
     if (!res.ok) return { ok: false, error: `API error ${res.status}` };

@@ -120,7 +120,7 @@ function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
       // GET /stats/daily
       if (method === 'GET' && parts[0] === 'stats' && parts[1] === 'daily') {
         return json(res, 200, {
-          sent_today:          db.getTodaySentCount(),
+          sent_today:          db.getTodaySentCount(!!settings.getAll().daily_limit_team_wide),
           daily_limit:         settings.getAll().daily_send_limit || 300,
           paused_campaigns:    db.getPausedCampaigns(),
           scheduled_campaigns: mailer.listScheduledDetails(),

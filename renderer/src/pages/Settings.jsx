@@ -68,7 +68,7 @@ export default function Settings() {
     smtp_user: '', smtp_pass: '',
     from_name: '', from_email: '', reply_to: '', unsubscribe_email: '',
     batch_size: 50, batch_delay: 60, per_email_delay: 1,
-    daily_send_limit: 300, daily_resume_time: '09:00',
+    daily_send_limit: 300, daily_resume_time: '09:00', daily_limit_team_wide: false,
     notify_daily_summary: true, notify_summary_time: '08:00',
     notify_campaign_reminder: true, notify_reminder_minutes: 15,
     notify_limit_reached: true, notify_campaign_done: true,
@@ -422,6 +422,20 @@ export default function Settings() {
               value={form.daily_resume_time || '09:00'}
               onChange={e => set('daily_resume_time', e.target.value)} />
           </div>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: -4, marginBottom: 12 }}>
+          Brevo's free plan allows 300 emails a day. Paid plans have a monthly allowance instead, so raise or disable this limit if you're on one.
+        </p>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--text-h)' }}>Team shares one sending account</div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+              Team Sync only. Turn on when teammates send through the same SMTP / Brevo account, so the limit counts everyone's sends today, not just this computer's.
+              Teammates' sends arrive with up to a minute's delay. Turn it on on every teammate's computer.
+            </div>
+          </div>
+          <ToggleSwitch checked={!!form.daily_limit_team_wide} onChange={v => set('daily_limit_team_wide', v)} />
         </div>
       </section>
 

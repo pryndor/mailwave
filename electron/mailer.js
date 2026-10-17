@@ -205,6 +205,9 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
   const batchDelay  = (cfg.batch_delay      || 60) * 1000;
   const emailDelay  = (cfg.per_email_delay  || 1)  * 1000;
   const dailyLimit  = cfg.daily_send_limit  || 300;
+  // Brevo stats tag: the campaign's shared uid, so every teammate's Metrics
+  // looks up the same tag (local ids differ per machine).
+  const statsId     = preview_to ? null : db.ensureCampaignUid(campaign_id);
 
   if (!preview_to) db.updateCampaignProgress(campaign_id, start_offset, total, 'sending');
 
@@ -239,7 +242,7 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
 
     // ── Daily limit check ───────────────────────────────────────────────────
     if (!preview_to && dailyLimit > 0) {
-      const todaySent = db.getTodaySentCount();
+      const todaySent = db.getTodaySentCount(!!cfg.daily_limit_team_wide);
       if (todaySent >= dailyLimit) {
         const resumeOffset = start_offset + i;
         const resumeAt     = calcNextResumeTime(cfg.daily_resume_time || '09:00');
@@ -275,7 +278,7 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
 
     const variant     = isAB && globalIdx >= splitAt ? 'b' : 'a';
     const subjectLine = (isAB && variant === 'b') ? campaign.ab_subject_b : campaign.subject;
-    const abTag       = isAB ? `campaign-${campaign_id}-${variant}` : `campaign-${campaign_id}`;
+    const abTag       = isAB ? `campaign-${statsId}-${variant}` : `campaign-${statsId}`;
 
     const attachments = (campaign.attachments || []).map(a => ({
       filename: a.name,
