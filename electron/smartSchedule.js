@@ -128,8 +128,11 @@ function smartScheduleByTimezone({ campaign_id, local_time }, mainWindow, getPor
     if (!group) group = { id: db.addGroup(groupName).id };
     db.assignGroup({ subscriber_ids: ids, group_id: group.id, action: 'add' });
 
+    // id goes after the spread: campaign.id would otherwise win, and this save
+    // would overwrite the original while the copy kept the original's groups,
+    // sending every timezone's copy to the whole list.
     const dup = db.duplicateCampaign(campaign_id);
-    db.saveCampaign({ id: dup.id, ...campaign, name: `${campaign.name} — ${tz}`, group_ids: [group.id] });
+    db.saveCampaign({ ...campaign, id: dup.id, name: `${campaign.name} — ${tz}`, group_ids: [group.id] });
 
     const sched = mailer.scheduleCampaign({ campaign_id: dup.id, send_at: sendAt }, mainWindow, getPort);
     results.push({ timezone: tz, count: ids.length, send_at: sendAt, campaign_id: dup.id, ok: sched.ok, error: sched.error });
