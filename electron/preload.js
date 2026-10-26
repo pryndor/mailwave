@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('api', {
     previewMerge:           (data) => invoke('campaigns:previewMerge', data),
     recipientCount:         (group_ids) => invoke('campaigns:recipientCount', group_ids),
     smartSchedule:          (data) => invoke('campaigns:smartSchedule', data),
+    smartSchedulePreview:   (data) => invoke('campaigns:smartSchedulePreview', data),
   },
 
   // History

@@ -301,6 +301,7 @@ ipcMain.handle('campaigns:delete',    withSync((_, id)    => db.deleteCampaign(i
 ipcMain.handle('campaigns:send',      (_, data)  => mailer.sendCampaign(data, mainWindow));
 ipcMain.handle('campaigns:stop',      (_, id)    => mailer.stopSending(id));
 ipcMain.handle('campaigns:resume',    (_, id)    => mailer.resumeCampaign(id, mainWindow));
+ipcMain.handle('campaigns:smartSchedulePreview', (_, data) => require('./smartSchedule').previewSmartSchedule(data));
 ipcMain.handle('campaigns:smartSchedule', withSync((_, data) => {
   const smartSchedule = require('./smartSchedule');
   return smartSchedule.smartScheduleByTimezone(data, mainWindow);

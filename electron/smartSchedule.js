@@ -56,11 +56,124 @@ const COUNTRY_TZ = {
   'chile': 'America/Santiago', 'cl': 'America/Santiago',
   'colombia': 'America/Bogota', 'co': 'America/Bogota',
   'peru': 'America/Lima', 'pe': 'America/Lima',
+  'sri lanka': 'Asia/Colombo', 'lk': 'Asia/Colombo',
+  'nepal': 'Asia/Kathmandu', 'np': 'Asia/Kathmandu',
+  'qatar': 'Asia/Qatar', 'qa': 'Asia/Qatar',
+  'kuwait': 'Asia/Kuwait', 'kw': 'Asia/Kuwait',
+  'oman': 'Asia/Muscat', 'om': 'Asia/Muscat',
+  'bahrain': 'Asia/Bahrain', 'bh': 'Asia/Bahrain',
+  'jordan': 'Asia/Amman', 'jo': 'Asia/Amman',
+  'lebanon': 'Asia/Beirut', 'lb': 'Asia/Beirut',
+  'iran': 'Asia/Tehran', 'ir': 'Asia/Tehran',
+  'iraq': 'Asia/Baghdad', 'iq': 'Asia/Baghdad',
+  'greece': 'Europe/Athens', 'gr': 'Europe/Athens',
+  'czech republic': 'Europe/Prague', 'czechia': 'Europe/Prague', 'cz': 'Europe/Prague',
+  'hungary': 'Europe/Budapest', 'hu': 'Europe/Budapest',
+  'romania': 'Europe/Bucharest', 'ro': 'Europe/Bucharest',
+  'ukraine': 'Europe/Kyiv', 'ua': 'Europe/Kyiv',
+  'morocco': 'Africa/Casablanca', 'ma': 'Africa/Casablanca',
+  'ghana': 'Africa/Accra', 'gh': 'Africa/Accra',
+  'ethiopia': 'Africa/Addis_Ababa', 'et': 'Africa/Addis_Ababa',
+  'tanzania': 'Africa/Dar_es_Salaam', 'tz': 'Africa/Dar_es_Salaam',
+  'uganda': 'Africa/Kampala', 'ug': 'Africa/Kampala',
 };
 
+// Other ways people write the same countries.
+const COUNTRY_ALIASES = {
+  'united states of america': 'usa', 'america': 'usa', 'u s a': 'usa', 'u s': 'usa',
+  'england': 'uk', 'scotland': 'uk', 'wales': 'uk', 'northern ireland': 'uk', 'great britain': 'uk', 'britain': 'uk', 'u k': 'uk',
+  'bharat': 'india', 'deutschland': 'germany', 'espana': 'spain', 'españa': 'spain', 'holland': 'netherlands',
+  'emirates': 'uae', 'dubai': 'uae', 'ksa': 'saudi arabia', 'republic of korea': 'south korea',
+  'peoples republic of china': 'china', 'prc': 'china', 'viet nam': 'vietnam', 'russian federation': 'russia',
+};
+
+const normCountry = (v) => String(v).toLowerCase().replace(/[.()'’]/g, ' ').replace(/^the\s+/, '').replace(/\s+/g, ' ').trim();
+
+// A country name or code → timezone. "Chennai, India" and "India (IN)" work
+// too: each comma part is tried, last first.
 function countryToTimezone(country) {
   if (!country) return null;
-  return COUNTRY_TZ[country.trim().toLowerCase()] || null;
+  const parts = String(country).split(/[,/|]/).map(normCountry).filter(Boolean).reverse();
+  for (const p of [normCountry(country), ...parts]) {
+    const key = COUNTRY_ALIASES[p] || p;
+    if (COUNTRY_TZ[key]) return COUNTRY_TZ[key];
+    const code = /\(([a-z]{2})\)$/.exec(String(country).toLowerCase().trim());
+    if (code && COUNTRY_TZ[code[1]]) return COUNTRY_TZ[code[1]];
+  }
+  return null;
+}
+
+// Custom field keys (as imports store them: lowercase, non-letters → "_")
+// that hold a timezone or a country. Tried in this order.
+const TIMEZONE_KEYS = ['timezone', 'time_zone', 'tz', 'iana_timezone', 'timezone_name'];
+const COUNTRY_KEYS  = ['country', 'country_region', 'country_or_region', 'country_name', 'country_code', 'nation', 'location', 'region'];
+
+// Country-code domain endings, for subscribers with no timezone or country
+// field: jane@clinic.co.in → India. Endings used worldwide by unrelated sites
+// (.co is Colombia, but mostly "company") are left out.
+const GENERIC_CCTLDS = new Set(['co']);
+
+// Full IANA names only (Asia/Kolkata, UTC). Intl also takes old three-letter
+// codes, but those are ambiguous: IST is India, Ireland or Israel.
+function isValidTimezone(tz) {
+  if (!/^(UTC|GMT|[A-Za-z]+\/[A-Za-z0-9_+\-/]+)$/.test(tz)) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
+}
+
+function emailTimezone(email) {
+  const tld = String(email || '').toLowerCase().split('.').pop();
+  if (!/^[a-z]{2}$/.test(tld) || GENERIC_CCTLDS.has(tld)) return null;
+  return COUNTRY_TZ[tld] || null;
+}
+
+// Where one subscriber's timezone comes from:
+//   timezone — a timezone field (most exact)
+//   country  — a country field
+//   email    — the email's country ending (.in, .de), if useEmailDomain
+//   fallback — none of these: the sender's own timezone
+function resolveTimezone(sub, { useEmailDomain = true, senderTz } = {}) {
+  const fields = sub.custom_fields || {};
+  let invalid = null;
+  for (const k of TIMEZONE_KEYS) {
+    const v = String(fields[k] || '').trim();
+    if (!v) continue;
+    if (isValidTimezone(v)) return { tz: v, source: 'timezone' };
+    invalid = v;
+  }
+  for (const k of COUNTRY_KEYS) {
+    const tz = countryToTimezone(fields[k]);
+    if (tz) return { tz, source: 'country', invalid };
+  }
+  if (useEmailDomain) {
+    const tz = emailTimezone(sub.email);
+    if (tz) return { tz, source: 'email', invalid };
+  }
+  return { tz: senderTz, source: 'fallback', invalid };
+}
+
+const SOURCES = ['timezone', 'country', 'email', 'fallback'];
+
+// Subscribers grouped by timezone, with where each group's timezones came
+// from, the next send time there, and the overall counts by source.
+function planSmartSchedule(subs, { local_time = '09:00', useEmailDomain = true } = {}) {
+  const [hh, mm] = local_time.split(':').map(Number);
+  const senderTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const buckets = new Map();
+  const totals = Object.fromEntries(SOURCES.map(k => [k, 0]));
+  const invalidTimezones = new Set();
+  for (const s of subs) {
+    const r = resolveTimezone(s, { useEmailDomain, senderTz });
+    if (r.invalid) invalidTimezones.add(r.invalid);
+    totals[r.source]++;
+    if (!buckets.has(r.tz)) buckets.set(r.tz, { timezone: r.tz, ids: [], sources: Object.fromEntries(SOURCES.map(k => [k, 0])) });
+    const b = buckets.get(r.tz);
+    b.ids.push(s.id);
+    b.sources[r.source]++;
+  }
+  const list = [...buckets.values()]
+    .map(b => ({ ...b, count: b.ids.length, send_at: nextLocalTimeUtc(b.timezone, hh, mm), isSender: b.timezone === senderTz }))
+    .sort((a, b) => b.count - a.count);
+  return { buckets: list, totals, senderTz, invalidTimezones: [...invalidTimezones].slice(0, 10) };
 }
 
 // Wall-clock time (hh:mm) in an IANA timezone → next matching UTC instant.
@@ -83,62 +196,56 @@ function nextLocalTimeUtc(timeZone, hh, mm) {
   return target.toISOString();
 }
 
-// Groups a campaign's target subscribers by their {{timezone}} custom field,
-// duplicates the campaign per timezone, and schedules each to fire at `local_time` (HH:MM)
-// in that group's local zone. Subscribers with no timezone set fall into a "default" bucket
-// scheduled using the sender machine's own local timezone.
-function smartScheduleByTimezone({ campaign_id, local_time }, mainWindow, getPort) {
+function loadCampaignSubscribers(campaign_id) {
+  const campaign = db.getCampaign(campaign_id);
+  if (!campaign) return { error: 'Campaign not found' };
+  const subs = db.getActiveSubscribersForCampaign(campaign.group_ids);
+  if (!subs.length) return { error: 'No active subscribers targeted by this campaign.' };
+  return { campaign, subs };
+}
+
+// What Smart Schedule would do, without creating or scheduling anything.
+function previewSmartSchedule({ campaign_id, local_time, use_email_domain = true }) {
+  const { campaign, subs, error } = loadCampaignSubscribers(campaign_id);
+  if (error) return { ok: false, error };
+  const plan = planSmartSchedule(subs, { local_time, useEmailDomain: use_email_domain });
+  return {
+    ok: true, total: subs.length, campaign_name: campaign.name,
+    totals: plan.totals, senderTz: plan.senderTz, invalidTimezones: plan.invalidTimezones,
+    buckets: plan.buckets.map(({ ids, ...b }) => b),
+  };
+}
+
+// Splits a campaign into one scheduled copy per timezone, each going only to
+// that timezone's subscribers at local_time (HH:MM) there. The original stays
+// as it was. Subscribers with no timezone, country or country email ending go
+// out at local_time in the sender's own timezone.
+function smartScheduleByTimezone({ campaign_id, local_time, use_email_domain = true }, mainWindow, getPort) {
   if (!license.isPro(settings.getAll().license_key)) {
     return { ok: false, error: 'Smart Schedule is a Pro feature.', proRequired: true };
   }
-
-  const campaign = db.getCampaign(campaign_id);
-  if (!campaign) return { ok: false, error: 'Campaign not found' };
-
-  const [hh, mm] = (local_time || '09:00').split(':').map(Number);
-  const subs = db.getActiveSubscribersForCampaign(campaign.group_ids);
-  if (!subs.length) return { ok: false, error: 'No active subscribers targeted by this campaign.' };
-
-  const senderTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const buckets = new Map(); // timezone -> subscriber ids
-  let unmapped = 0; // recipients that fell back to sender's own timezone (no usable timezone/country data)
-
-  for (const s of subs) {
-    const explicitTz = (s.custom_fields?.timezone || '').trim();
-    const fromCountry = countryToTimezone(s.custom_fields?.country);
-    const tz = explicitTz || fromCountry;
-    if (!tz) unmapped++;
-    const bucketKey = tz || senderTz;
-    if (!buckets.has(bucketKey)) buckets.set(bucketKey, []);
-    buckets.get(bucketKey).push(s.id);
-  }
+  const { campaign, subs, error } = loadCampaignSubscribers(campaign_id);
+  if (error) return { ok: false, error };
+  const plan = planSmartSchedule(subs, { local_time: local_time || '09:00', useEmailDomain: use_email_domain });
 
   const results = [];
-  for (const [tz, ids] of buckets) {
-    let sendAt;
-    try {
-      sendAt = nextLocalTimeUtc(tz, hh, mm);
-    } catch (err) {
-      results.push({ timezone: tz, count: ids.length, error: `Invalid timezone: ${tz}` });
-      continue;
-    }
-
-    const groupName = `__smart_tz__ ${tz} (${campaign.name} #${campaign_id})`;
+  for (const b of plan.buckets) {
+    const groupName = `__smart_tz__ ${b.timezone} (${campaign.name} #${campaign_id})`;
     let group = db.listGroups().find(g => g.name === groupName);
     if (!group) group = { id: db.addGroup(groupName).id };
-    db.assignGroup({ subscriber_ids: ids, group_id: group.id, action: 'add' });
+    db.assignGroup({ subscriber_ids: b.ids, group_id: group.id, action: 'add' });
 
     // id goes after the spread: campaign.id would otherwise win, and this save
     // would overwrite the original while the copy kept the original's groups,
     // sending every timezone's copy to the whole list.
     const dup = db.duplicateCampaign(campaign_id);
-    db.saveCampaign({ ...campaign, id: dup.id, name: `${campaign.name} — ${tz}`, group_ids: [group.id] });
+    db.saveCampaign({ ...campaign, id: dup.id, name: `${campaign.name} — ${b.timezone}`, group_ids: [group.id] });
 
-    const sched = mailer.scheduleCampaign({ campaign_id: dup.id, send_at: sendAt }, mainWindow, getPort);
-    results.push({ timezone: tz, count: ids.length, send_at: sendAt, campaign_id: dup.id, ok: sched.ok, error: sched.error });
+    const sched = mailer.scheduleCampaign({ campaign_id: dup.id, send_at: b.send_at }, mainWindow, getPort);
+    results.push({ timezone: b.timezone, count: b.count, sources: b.sources, send_at: b.send_at, campaign_id: dup.id, ok: sched.ok, error: sched.error });
   }
 
-  return { ok: true, buckets: results, unmapped };
+  return { ok: true, buckets: results, unmapped: plan.totals.fallback, totals: plan.totals };
 }
 
-module.exports = { smartScheduleByTimezone, nextLocalTimeUtc, countryToTimezone };
+module.exports = { smartScheduleByTimezone, previewSmartSchedule, planSmartSchedule, resolveTimezone, nextLocalTimeUtc, countryToTimezone };

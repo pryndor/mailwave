@@ -696,6 +696,8 @@ function SendPanel({ campaign, onDone }) {
   const [smartLocalTime, setSmartLocalTime] = useState('09:00')
   const [smartResult, setSmartResult]   = useState(null)
   const [smartLoading, setSmartLoading] = useState(false)
+  const [smartUseEmail, setSmartUseEmail] = useState(true)
+  const [smartPreview, setSmartPreview] = useState(null)
   const [showChecklist, setShowChecklist] = useState(false)
   const [subCount, setSubCount]       = useState(0)
   const [testSentAt, setTestSentAt]   = useState(campaign.test_sent_at || null)
@@ -769,9 +771,19 @@ function SendPanel({ campaign, onDone }) {
     toast.success('Stopping after current batch...')
   }
 
+  // What Smart Schedule will do, refreshed as the options change. Nothing is
+  // created until "Schedule" is clicked.
+  useEffect(() => {
+    if (!smartMode || smartResult) return
+    let live = true
+    window.api.campaigns.smartSchedulePreview({ campaign_id: campaign.id, local_time: smartLocalTime, use_email_domain: smartUseEmail })
+      .then(r => { if (live) setSmartPreview(r) })
+    return () => { live = false }
+  }, [smartMode, smartLocalTime, smartUseEmail, smartResult, campaign.id])
+
   const runSmartSchedule = async () => {
     setSmartLoading(true)
-    const r = await window.api.campaigns.smartSchedule({ campaign_id: campaign.id, local_time: smartLocalTime })
+    const r = await window.api.campaigns.smartSchedule({ campaign_id: campaign.id, local_time: smartLocalTime, use_email_domain: smartUseEmail })
     setSmartLoading(false)
     if (!r.ok) { toast.error(r.error || 'Smart schedule failed'); return }
     setSmartResult(r)
@@ -847,30 +859,77 @@ function SendPanel({ campaign, onDone }) {
       <div className="card" style={{ marginTop: 20, maxWidth: 900 }}>
         <h3 style={{ fontSize: 14, marginBottom: 4 }}>Smart Schedule <span style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 400 }}>— send at the right local time per recipient</span></h3>
         <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 12 }}>
-          Groups recipients by a <code>timezone</code> CSV column (IANA names, e.g. <code>Asia/Kolkata</code>) or, if that's missing, by a <code>country</code> column (looked up against ~60 common countries). Splits into one scheduled send per timezone, each firing at the local hour below. Recipients with neither field, or an unrecognized country, fall back to this computer's local time.
+          Sends one copy per timezone, each at the local time you pick. Each recipient's timezone comes from, in order:
+          a <code>Timezone</code> column (e.g. <code>Asia/Kolkata</code>), a <code>Country</code> column (also "Country/Region", "Location"…),
+          or their email's country ending (<code>.in</code>, <code>.de</code>…). Anyone else gets it at that time in this computer's timezone.
         </p>
         {!smartMode ? (
           <button className="btn btn-ghost" onClick={() => setSmartMode(true)}><Clock size={14} /> Set up smart schedule</button>
         ) : (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
               <label style={{ fontSize: 13 }}>Send at</label>
-              <input type="time" className="input" style={{ width: 120 }} value={smartLocalTime} onChange={e => setSmartLocalTime(e.target.value)} />
+              <input type="time" className="input" style={{ width: 120 }} value={smartLocalTime} disabled={!!smartResult}
+                onChange={e => setSmartLocalTime(e.target.value)} />
               <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>local time, per recipient's timezone</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginLeft: 12, cursor: 'pointer' }}>
+                <input type="checkbox" checked={smartUseEmail} disabled={!!smartResult} onChange={e => setSmartUseEmail(e.target.checked)} />
+                Guess from email ending (.in, .uk…) when there's no country
+              </label>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary" disabled={smartLoading} onClick={runSmartSchedule}>
-                {smartLoading ? 'Scheduling…' : <><Clock size={14} /> Schedule Per-Timezone</>}
-              </button>
-              <button className="btn btn-ghost" onClick={() => { setSmartMode(false); setSmartResult(null) }}>Cancel</button>
-            </div>
-            {smartResult && (
-              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {smartResult.unmapped > 0 && (
-                  <div style={{ fontSize: 12, padding: '6px 10px', background: 'var(--warning-bg, #3a2f0f)', color: 'var(--warning)', borderRadius: 'var(--radius)' }}>
-                    {smartResult.unmapped} recipient(s) had no usable timezone/country — sent at this computer's local time instead.
+
+            {!smartResult && smartPreview && !smartPreview.ok && (
+              <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>{smartPreview.error}</div>
+            )}
+            {!smartResult && smartPreview?.ok && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>
+                  {smartPreview.total} recipient(s) →{' '}
+                  {[['timezone', 'from Timezone'], ['country', 'from Country'], ['email', 'from email ending'], ['fallback', 'no data']]
+                    .filter(([k]) => smartPreview.totals[k] > 0)
+                    .map(([k, label]) => `${smartPreview.totals[k]} ${label}`).join(' · ')}
+                </div>
+                {smartPreview.totals.fallback === smartPreview.total && (
+                  <div style={{ fontSize: 12, padding: '6px 10px', marginBottom: 6, background: 'rgba(245,158,11,0.06)', color: 'var(--warning)', borderRadius: 'var(--radius)' }}>
+                    No recipient has a timezone, country or country email ending, so this is the same as a normal schedule at {smartLocalTime} your time.
+                    Add a Country or Timezone column to your CSV to use Smart Schedule.
                   </div>
                 )}
+                {smartPreview.invalidTimezones?.length > 0 && (
+                  <div style={{ fontSize: 12, padding: '6px 10px', marginBottom: 6, background: 'rgba(245,158,11,0.06)', color: 'var(--warning)', borderRadius: 'var(--radius)' }}>
+                    Not real timezone names, ignored: {smartPreview.invalidTimezones.join(', ')}. Use names like Asia/Kolkata or Europe/London.
+                  </div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {smartPreview.buckets.map(b => (
+                    <div key={b.timezone} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, padding: '6px 10px', background: 'var(--bg3)', borderRadius: 'var(--radius)' }}>
+                      <span>
+                        <strong>{b.timezone}</strong>{b.isSender && <span style={{ color: 'var(--text-dim)' }}> (your timezone)</span>} — {b.count} recipient(s)
+                        <span style={{ color: 'var(--text-dim)' }}>
+                          {' '}({[['timezone', 'timezone'], ['country', 'country'], ['email', 'email ending'], ['fallback', 'no data']]
+                            .filter(([k]) => b.sources[k] > 0).map(([k, l]) => `${b.sources[k]} ${l}`).join(', ')})
+                        </span>
+                      </span>
+                      <span style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>{fmtDateTime(b.send_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!smartResult && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" disabled={smartLoading || !smartPreview?.ok} onClick={runSmartSchedule}>
+                  {smartLoading ? 'Scheduling…' : <><Clock size={14} /> Schedule {smartPreview?.buckets?.length || ''} send{smartPreview?.buckets?.length === 1 ? '' : 's'}</>}
+                </button>
+                <button className="btn btn-ghost" onClick={() => { setSmartMode(false); setSmartPreview(null) }}>Cancel</button>
+              </div>
+            )}
+            {smartResult && (
+              <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 12, color: 'var(--success)' }}>
+                  Scheduled. Each timezone is now its own campaign in the list ("{campaign.name} — timezone"); this campaign itself isn't sent.
+                </div>
                 {smartResult.buckets.map((b, i) => (
                   <div key={i} style={{ fontSize: 12, padding: '6px 10px', background: b.error ? 'var(--danger-bg, #3a1a1a)' : 'var(--bg3)', borderRadius: 'var(--radius)' }}>
                     {b.error
