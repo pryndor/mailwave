@@ -262,6 +262,16 @@ ipcMain.handle('subscribers:import', withSync(async (_, rows, group_id, opts = {
     : new Set();
   return db.importSubscribers(rows, group_id || null, { clean, skipRole: !!opts.skipRole, deadDomains });
 }));
+// "Save as group" for a Smart filter: adds every match to a group (new or existing).
+ipcMain.handle('subscribers:filterToGroup', withSync((_, { filter, group_name }) => {
+  const name = String(group_name || '').trim();
+  if (!name) return { ok: false, error: 'Name the group' };
+  const existing = db.listGroups().find(g => g.name.toLowerCase() === name.toLowerCase());
+  const group_id = existing ? existing.id : db.addGroup(name).id;
+  const ids = db.subscriberIdsForFilter(filter || {});
+  db.assignGroup({ subscriber_ids: ids, group_id, action: 'add' });
+  return { ok: true, group_id, count: ids.length, existing: !!existing };
+}));
 ipcMain.handle('subscribers:checkEmail', (_, email) => {
   const normalized = contactChecks.normalizeEmail(email);
   if (!normalized) return { ok: false, error: 'Invalid email address' };
@@ -305,6 +315,7 @@ ipcMain.handle('campaigns:previewMerge', (_, { campaign, subscriber_id }) => {
 
 // Send history
 ipcMain.handle('history:list', (_, opts) => db.listHistory(opts));
+ipcMain.handle('history:failures', (_, campaign_id) => db.campaignFailureGroups(campaign_id));
 
 // Scheduling
 ipcMain.handle('campaigns:schedule',            withSync((_, data) => mailer.scheduleCampaign(data, mainWindow)));
@@ -328,17 +339,14 @@ const brevo = require('./brevo');
 
 ipcMain.handle('brevo:stats',           ()      => brevo.getAccountStats(settings.getAll().brevo_api_key));
 ipcMain.handle('brevo:today',           ()      => brevo.getTodayStats(settings.getAll().brevo_api_key));
+ipcMain.handle('brevo:hasKey',          ()      => !!settings.getAll().brevo_api_key);
 // Sends are tagged campaign-<uid>[-a|-b]. Campaigns sent before that change
 // were tagged with the local id, which only means something on the machine
 // that sent them, so that tag is tried only there.
 ipcMain.handle('brevo:campaignMetrics', (_, id, variant) => {
   const camp = db.getCampaign(id);
   if (!camp) return { ok: false, error: 'Campaign not found' };
-  const suffix = variant ? `-${variant}` : '';
-  const tags = [];
-  if (camp.uid) tags.push(`campaign-${camp.uid}${suffix}`);
-  if (db.campaignSentHere(id)) tags.push(`campaign-${id}${suffix}`);
-  return brevo.getCampaignMetrics(settings.getAll().brevo_api_key, tags);
+  return brevo.getCampaignMetricsFor(settings.getAll().brevo_api_key, camp, variant, db.campaignSentHere(id));
 });
 
 // Notifications
@@ -419,3 +427,11 @@ ipcMain.handle('ai:reply',      ai.handler((opts)  => ai.reply(opts)));
 ipcMain.handle('ai:subjects',   ai.handler((opts)  => ai.subjects(opts)));
 ipcMain.handle('ai:rewrite',    ai.handler((opts)  => ai.rewrite(opts)));
 ipcMain.handle('ai:review',     ai.handler((camp)  => ai.review(camp)));
+ipcMain.handle('ai:previewText', ai.handler((opts) => ai.previewText(opts)));
+ipcMain.handle('ai:plainText',   ai.handler((opts) => ai.plainText(opts)));
+ipcMain.handle('ai:translate',   ai.handler((opts) => ai.translate(opts)));
+ipcMain.handle('ai:sequence',    ai.handler((brief) => ai.sequence(brief)));
+ipcMain.handle('ai:report',      ai.handler((opts) => ai.report(opts)));
+ipcMain.handle('ai:subscriberFilter', ai.handler((opts) => ai.subscriberFilter(opts)));
+ipcMain.handle('ai:mapColumns',  ai.handler((opts) => ai.mapColumns(opts)));
+ipcMain.handle('ai:continue',    ai.handler((opts) => ai.continueWriting(opts)));

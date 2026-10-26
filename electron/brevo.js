@@ -92,4 +92,15 @@ async function getTagMetrics(apiKey, tag) {
   }
 }
 
-module.exports = { getAccountStats, getTodayStats, getCampaignMetrics };
+// Stats for one campaign (or one A/B variant: 'a' | 'b'). Sends are tagged
+// campaign-<uid>[-a|-b]; campaigns sent before uids existed were tagged with
+// the local id, which only means something on the machine that sent them.
+async function getCampaignMetricsFor(apiKey, camp, variant = '', sentHere = false) {
+  const suffix = variant ? `-${variant}` : '';
+  const tags = [];
+  if (camp.uid) tags.push(`campaign-${camp.uid}${suffix}`);
+  if (sentHere) tags.push(`campaign-${camp.id}${suffix}`);
+  return getCampaignMetrics(apiKey, tags);
+}
+
+module.exports = { getAccountStats, getTodayStats, getCampaignMetrics, getCampaignMetricsFor };

@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const path     = require('path');
 const workspace = require('./workspace');
 const contactChecks = require('./contactChecks');
+const smtpErrors    = require('./smtpErrors');
 
 const dbPath = path.join(workspace.dataDir(), 'mailwave.db');
 const db = new Database(dbPath);
@@ -20,6 +21,11 @@ try { db.exec(`ALTER TABLE campaigns ADD COLUMN scheduled_at   TEXT`);          
 try { db.exec(`ALTER TABLE subscribers ADD COLUMN custom_fields TEXT NOT NULL DEFAULT '{}'`);   } catch {}
 try { db.exec(`ALTER TABLE campaigns ADD COLUMN preview_text   TEXT    NOT NULL DEFAULT ''`);  } catch {}
 try { db.exec(`ALTER TABLE campaigns ADD COLUMN test_sent_at   TEXT`);                          } catch {}
+try { db.exec(`ALTER TABLE campaigns ADD COLUMN ab_mode        TEXT    NOT NULL DEFAULT 'split'`); } catch {}
+try { db.exec(`ALTER TABLE campaigns ADD COLUMN ab_test_pct    INTEGER NOT NULL DEFAULT 20`);  } catch {}
+try { db.exec(`ALTER TABLE campaigns ADD COLUMN ab_wait_hours  INTEGER NOT NULL DEFAULT 4`);   } catch {}
+try { db.exec(`ALTER TABLE campaigns ADD COLUMN ab_metric      TEXT    NOT NULL DEFAULT 'opens'`); } catch {}
+try { db.exec(`ALTER TABLE campaigns ADD COLUMN ab_winner      TEXT    NOT NULL DEFAULT ''`);  } catch {}
 
 
 // ── Schema ────────────────────────────────────────────────────────────────────
@@ -76,6 +82,11 @@ db.exec(`
     ab_split_pct  INTEGER NOT NULL DEFAULT 50,
     preview_text  TEXT NOT NULL DEFAULT '',      -- inbox preview line (preheader)
     test_sent_at  TEXT,                          -- last successful test email, this machine only
+    ab_mode       TEXT NOT NULL DEFAULT 'split', -- split: A to first %, B to rest | winner: test both, send the winner
+    ab_test_pct   INTEGER NOT NULL DEFAULT 20,   -- winner mode: share of the list in the test
+    ab_wait_hours INTEGER NOT NULL DEFAULT 4,    -- winner mode: wait before picking
+    ab_metric     TEXT NOT NULL DEFAULT 'opens', -- winner mode: opens | clicks (Brevo stats)
+    ab_winner     TEXT NOT NULL DEFAULT '',      -- winner mode: '' until picked, then 'a' | 'b'
     resume_offset INTEGER NOT NULL DEFAULT 0,
     resume_at     TEXT,
     scheduled_at  TEXT,
@@ -148,7 +159,85 @@ db.exec(`
 `);
 
 // ── Subscribers ───────────────────────────────────────────────────────────────
-function listSubscribers({ search = '', status = 'all', group_id = null, page = 1, limit = 100 } = {}) {
+// Structured subscriber filter (from the Smart filter, electron/ai.js
+// subscriberFilter). Every value is bound as a parameter and every column or
+// field name is checked against a fixed list or the known custom keys: nothing
+// from the model ever becomes SQL text.
+//   { status, groups: [names], groups_mode: 'any'|'none', email_domains: [..],
+//     conditions: [{ field, op: equals|contains|starts_with|empty|not_empty, value }],
+//     added_after, added_before (YYYY-MM-DD),
+//     emailed: { mode: 'never'|'ever'|'campaign'|'not_campaign'|'within_days'|'not_within_days', campaign, days } }
+const FILTER_COLUMNS = new Set(['email', 'name', 'first_name', 'last_name', 'phone', 'company']);
+
+function filterSql(filter = {}) {
+  const where = [];
+  const params = [];
+  if (['active', 'unsubscribed', 'bounced'].includes(filter.status)) { where.push('s.status = ?'); params.push(filter.status); }
+
+  const groupNames = (filter.groups || []).map(String).filter(Boolean);
+  if (groupNames.length) {
+    const ph = groupNames.map(() => '?').join(',');
+    const sub = `SELECT 1 FROM subscriber_groups sg JOIN groups g ON g.id = sg.group_id WHERE sg.subscriber_id = s.id AND lower(g.name) IN (${ph})`;
+    where.push(filter.groups_mode === 'none' ? `NOT EXISTS (${sub})` : `EXISTS (${sub})`);
+    params.push(...groupNames.map(n => n.toLowerCase()));
+  }
+
+  const domains = (filter.email_domains || []).map(d => String(d).toLowerCase().replace(/^@/, '').trim()).filter(Boolean);
+  if (domains.length) {
+    where.push(`(${domains.map(() => "lower(s.email) LIKE ? ESCAPE '\\'").join(' OR ')})`);
+    params.push(...domains.map(d => `%@${d.replace(/[\\%_]/g, '\\$&')}`));
+  }
+
+  const customKeys = new Set(listCustomFieldKeys());
+  for (const c of filter.conditions || []) {
+    const field = String(c.field || '').toLowerCase();
+    let expr;
+    if (FILTER_COLUMNS.has(field)) expr = `COALESCE(s.${field}, '')`;
+    else if (customKeys.has(field)) { expr = `COALESCE(json_extract(s.custom_fields, ?), '')`; params.push(`$."${field}"`); }
+    else continue;   // unknown field: ignored (the UI shows the filter as applied)
+    const value = String(c.value ?? '').toLowerCase();
+    const like = value.replace(/[\\%_]/g, '\\$&');
+    switch (c.op) {
+      case 'equals':      where.push(`lower(${expr}) = ?`); params.push(value); break;
+      case 'contains':    where.push(`lower(${expr}) LIKE ? ESCAPE '\\'`); params.push(`%${like}%`); break;
+      case 'starts_with': where.push(`lower(${expr}) LIKE ? ESCAPE '\\'`); params.push(`${like}%`); break;
+      case 'empty':       where.push(`${expr} = ''`); break;
+      case 'not_empty':   where.push(`${expr} != ''`); break;
+      default: if (expr.includes('?')) params.pop();
+    }
+  }
+
+  const date = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) ? d : null;
+  if (date(filter.added_after))  { where.push(`date(s.created_at) >= ?`); params.push(filter.added_after); }
+  if (date(filter.added_before)) { where.push(`date(s.created_at) <= ?`); params.push(filter.added_before); }
+
+  // Send history matches by address, so teammates' synced sends count too.
+  const e = filter.emailed || {};
+  const sent = (extra) => `EXISTS (SELECT 1 FROM send_history h WHERE lower(h.email) = lower(s.email) AND h.status = 'sent'${extra})`;
+  const campaignIds = () => {
+    const name = String(e.campaign || '').toLowerCase();
+    return db.prepare(`SELECT id FROM campaigns WHERE lower(name) = ? OR lower(subject) = ? OR lower(name) LIKE ?`)
+      .all(name, name, `%${name}%`).map(r => r.id);
+  };
+  const days = Math.max(1, Math.min(3650, Number(e.days) || 30));
+  switch (e.mode) {
+    case 'never': where.push(`NOT ${sent('')}`); break;
+    case 'ever':  where.push(sent('')); break;
+    case 'within_days':     where.push(sent(` AND h.sent_at >= datetime('now', ?)`)); params.push(`-${days} days`); break;
+    case 'not_within_days': where.push(`NOT ${sent(` AND h.sent_at >= datetime('now', ?)`)}`); params.push(`-${days} days`); break;
+    case 'campaign':
+    case 'not_campaign': {
+      const ids = e.campaign ? campaignIds() : [];
+      const inner = ids.length ? sent(` AND h.campaign_id IN (${ids.map(() => '?').join(',')})`) : '0';
+      where.push(e.mode === 'campaign' ? inner : `NOT ${inner}`);
+      params.push(...ids);
+      break;
+    }
+  }
+  return { where: where.length ? where.join(' AND ') : '1=1', params };
+}
+
+function listSubscribers({ search = '', status = 'all', group_id = null, page = 1, limit = 100, filter = null } = {}) {
   const offset = (page - 1) * limit;
   let where = '1=1';
   const params = [];
@@ -162,6 +251,11 @@ function listSubscribers({ search = '', status = 'all', group_id = null, page = 
   if (group_id) {
     where += ' AND EXISTS (SELECT 1 FROM subscriber_groups sg WHERE sg.subscriber_id = s.id AND sg.group_id = ?)';
     params.push(group_id);
+  }
+  if (filter) {
+    const f = filterSql(filter);
+    where += ` AND (${f.where})`;
+    params.push(...f.params);
   }
 
   const total = db.prepare(`SELECT COUNT(*) as c FROM subscribers s WHERE ${where}`).get(...params).c;
@@ -177,6 +271,12 @@ function listSubscribers({ search = '', status = 'all', group_id = null, page = 
   ).all(...params, limit, offset).map(r => ({ ...r, custom_fields: JSON.parse(r.custom_fields || '{}') }));
 
   return { rows, total, page, limit };
+}
+
+// Every subscriber id matching a filter: for "Save as group".
+function subscriberIdsForFilter(filter) {
+  const f = filterSql(filter);
+  return db.prepare(`SELECT s.id FROM subscribers s WHERE ${f.where}`).all(...f.params).map(r => r.id);
 }
 
 function addSubscriber(sub) {
@@ -466,6 +566,7 @@ function saveCampaign(camp) {
     ab_subject_b: camp.ab_subject_b || '',
     ab_split_pct: camp.ab_split_pct || 50,
     preview_text: camp.preview_text || '',
+    ...abSettings(camp),
   };
   if (camp.id) {
     db.prepare(`
@@ -473,15 +574,32 @@ function saveCampaign(camp) {
       from_email=@from_email, reply_to=@reply_to, html=@html, text=@text,
       group_ids=@group_ids, attachments=@attachments,
       ab_subject_b=@ab_subject_b, ab_split_pct=@ab_split_pct, preview_text=@preview_text,
+      ab_mode=@ab_mode, ab_test_pct=@ab_test_pct, ab_wait_hours=@ab_wait_hours, ab_metric=@ab_metric,
       updated_at=datetime('now') WHERE id=@id
     `).run(data);
     return { id: camp.id };
   }
   const r = db.prepare(`
-    INSERT INTO campaigns (name, subject, from_name, from_email, reply_to, html, text, group_ids, attachments, ab_subject_b, ab_split_pct, preview_text)
-    VALUES (@name, @subject, @from_name, @from_email, @reply_to, @html, @text, @group_ids, @attachments, @ab_subject_b, @ab_split_pct, @preview_text)
+    INSERT INTO campaigns (name, subject, from_name, from_email, reply_to, html, text, group_ids, attachments, ab_subject_b, ab_split_pct, preview_text,
+      ab_mode, ab_test_pct, ab_wait_hours, ab_metric)
+    VALUES (@name, @subject, @from_name, @from_email, @reply_to, @html, @text, @group_ids, @attachments, @ab_subject_b, @ab_split_pct, @preview_text,
+      @ab_mode, @ab_test_pct, @ab_wait_hours, @ab_metric)
   `).run(data);
   return { id: r.lastInsertRowid };
+}
+
+// A/B winner-mode settings, clamped to sane values.
+function abSettings(c) {
+  return {
+    ab_mode:       c.ab_mode === 'winner' ? 'winner' : 'split',
+    ab_test_pct:   Math.min(50, Math.max(5, Number(c.ab_test_pct) || 20)),
+    ab_wait_hours: Math.min(72, Math.max(1, Number(c.ab_wait_hours) || 4)),
+    ab_metric:     c.ab_metric === 'clicks' ? 'clicks' : 'opens',
+  };
+}
+
+function setAbWinner(id, winner) {
+  db.prepare('UPDATE campaigns SET ab_winner = ? WHERE id = ?').run(winner || '', id);
 }
 
 function deleteCampaign(id) {
@@ -498,6 +616,8 @@ function normalizeCampaign(c) {
     ab_split_pct:  c.ab_split_pct  || 50,
     preview_text:  c.preview_text  || '',
     test_sent_at:  c.test_sent_at  || null,
+    ...abSettings(c),
+    ab_winner:     c.ab_winner     || '',
     resume_offset: c.resume_offset || 0,
     resume_at:     c.resume_at     || null,
     scheduled_at:  c.scheduled_at  || null,
@@ -510,10 +630,12 @@ function duplicateCampaign(id) {
   const r = db.prepare(`
     INSERT INTO campaigns
       (name, subject, from_name, from_email, reply_to, html, text,
-       group_ids, attachments, ab_subject_b, ab_split_pct, preview_text)
+       group_ids, attachments, ab_subject_b, ab_split_pct, preview_text,
+       ab_mode, ab_test_pct, ab_wait_hours, ab_metric)
     VALUES
       (@name, @subject, @from_name, @from_email, @reply_to, @html, @text,
-       @group_ids, @attachments, @ab_subject_b, @ab_split_pct, @preview_text)
+       @group_ids, @attachments, @ab_subject_b, @ab_split_pct, @preview_text,
+       @ab_mode, @ab_test_pct, @ab_wait_hours, @ab_metric)
   `).run({
     ...orig,
     name:        `${orig.name} (Copy)`,
@@ -521,6 +643,7 @@ function duplicateCampaign(id) {
     ab_subject_b:orig.ab_subject_b || '',
     ab_split_pct:orig.ab_split_pct || 50,
     preview_text:orig.preview_text || '',
+    ...abSettings(orig),
     id: undefined,
   });
   return { id: r.lastInsertRowid };
@@ -695,7 +818,8 @@ function aiUsageThisMonth() {
 // no addresses, so it's safe to hand to the AI follow-up writer.
 function campaignSendSummary(campaign_id) {
   const counts = db.prepare(`
-    SELECT COALESCE(SUM(status = 'sent'), 0) AS sent, COALESCE(SUM(status != 'sent'), 0) AS failed
+    SELECT COALESCE(SUM(status = 'sent'), 0) AS sent, COALESCE(SUM(status = 'bounced'), 0) AS bounced,
+           COALESCE(SUM(status != 'sent'), 0) AS failed
     FROM send_history WHERE campaign_id = ?
   `).get(campaign_id);
   const topErrors = db.prepare(`
@@ -706,9 +830,35 @@ function campaignSendSummary(campaign_id) {
   return { ...counts, topErrors };
 }
 
+// A campaign's failed sends grouped by cause (smtpErrors.js), with fixes.
+function campaignFailureGroups(campaign_id) {
+  const rows = db.prepare(`
+    SELECT error, COUNT(*) AS count FROM send_history
+    WHERE campaign_id = ? AND status != 'sent'
+    GROUP BY error
+  `).all(campaign_id);
+  return smtpErrors.groupFailures(rows);
+}
+
+// The account's other sent campaigns, newest first, as the baseline a report
+// compares against. Counts only: no addresses.
+function recentCampaignStats(exclude_id, limit = 10) {
+  return db.prepare(`
+    SELECT c.id, c.name, c.subject, c.sent_at,
+           COALESCE(SUM(h.status = 'sent'), 0)    AS sent,
+           COALESCE(SUM(h.status = 'bounced'), 0) AS bounced,
+           COALESCE(SUM(h.status = 'failed'), 0)  AS failed
+    FROM campaigns c JOIN send_history h ON h.campaign_id = c.id
+    WHERE c.id != ?
+    GROUP BY c.id
+    ORDER BY MAX(h.sent_at) DESC
+    LIMIT ?
+  `).all(exclude_id, limit);
+}
+
 module.exports = {
   handle: db,   // raw connection for teamStore.js
-  listSubscribers, addSubscriber, updateSubscriber, deleteSubscribers,
+  listSubscribers, subscriberIdsForFilter, addSubscriber, updateSubscriber, deleteSubscribers,
   importSubscribers, importDomains, exportSubscribers, subscriberStats, listCustomFieldKeys,
   listGroups, addGroup, deleteGroup, assignGroup,
   listTemplates, saveTemplate, deleteTemplate,
@@ -716,12 +866,12 @@ module.exports = {
   ensureCampaignUid, campaignSentHere,
   listHistory, logSend, updateCampaignProgress,
   getActiveSubscribersForCampaign, unsubscribeByEmail,
-  campaignReachedEmails, markSubscriberBounced, markTestSent,
+  campaignReachedEmails, markSubscriberBounced, markTestSent, setAbWinner,
   // Daily limit & resume
   getTodaySentCount, updateCampaignResume, updateCampaignScheduledAt,
   getPausedCampaigns, getPausedCampaignsToResume,
   // Notifications
   addNotification, listNotifications, markAllNotificationsRead, getUnreadNotificationCount,
   // AI
-  logAiCall, aiUsageThisMonth, campaignSendSummary,
+  logAiCall, aiUsageThisMonth, campaignSendSummary, campaignFailureGroups, recentCampaignStats,
 };

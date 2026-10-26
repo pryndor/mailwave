@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef } from 'react'
-import { Plus, Upload, Download, Trash2, Search, Tag, Edit2, X, Check, Users, RefreshCw, FolderOpen, Folder, ChevronRight } from 'lucide-react'
+import { Plus, Upload, Download, Trash2, Search, Tag, Edit2, X, Check, Users, RefreshCw, FolderOpen, Folder, ChevronRight, Sparkles, FolderPlus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Papa from 'papaparse'
+import useAiConfig from '../hooks/useAiConfig.js'
+import { autoMapColumns, describeShape, applyMapping, findEmailByValues, IMPORT_TARGETS } from '../utils/importMapping.js'
 
 export default function Subscribers() {
   const [rows, setRows]         = useState([])
@@ -19,15 +21,38 @@ export default function Subscribers() {
   const [newGroupName, setNewGroupName] = useState('')
   const [showNewGroup, setShowNewGroup] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
+  const { ready: aiReady } = useAiConfig()
+  const [smartQuery, setSmartQuery] = useState('')
+  const [smart, setSmart]           = useState(null)   // { filter, explanation, unsupported }
+  const [smartBusy, setSmartBusy]   = useState(false)
 
   const load = () => {
-    window.api.subscribers.list({ search, status, group_id: groupFilter || null, page, limit: 100 })
+    window.api.subscribers.list({ search, status, group_id: groupFilter || null, page, limit: 100, filter: smart?.filter || null })
       .then(d => { setRows(d.rows); setTotal(d.total) })
     window.api.subscribers.stats().then(setStats)
     window.api.groups.list().then(setGroups)
   }
 
-  useEffect(() => { load() }, [search, status, groupFilter, page])
+  useEffect(() => { load() }, [search, status, groupFilter, page, smart])
+
+  const runSmartFilter = async () => {
+    if (!smartQuery.trim()) return
+    setSmartBusy(true)
+    const r = await window.api.ai.subscriberFilter({ query: smartQuery })
+    setSmartBusy(false)
+    if (!r.ok) { toast.error(r.error); return }
+    setSmart(r)
+    setPage(1)
+  }
+
+  const saveSmartAsGroup = async () => {
+    const name = prompt('Save these subscribers as a group. Group name:', smartQuery.slice(0, 40))
+    if (!name?.trim()) return
+    const r = await window.api.subscribers.filterToGroup({ filter: smart.filter, group_name: name })
+    if (!r.ok) { toast.error(r.error); return }
+    toast.success(`${r.count} subscriber(s) added to ${r.existing ? 'existing' : 'new'} group "${name.trim()}"`)
+    load()
+  }
 
   const toggleSelect = (id) => {
     setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -258,6 +283,17 @@ export default function Subscribers() {
             <option value="bounced">Bounced</option>
           </select>
 
+          {aiReady && (
+            <div style={{ display: 'flex', gap: 6, flex: 1, minWidth: 260 }}>
+              <input className="input" placeholder='Smart filter, e.g. "active doctors in Chennai never emailed"' value={smartQuery}
+                onChange={e => setSmartQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') runSmartFilter() }} />
+              <button className="btn btn-ghost btn-sm" disabled={smartBusy || !smartQuery.trim()} onClick={runSmartFilter}
+                title="Describe the subscribers you want; AI turns it into a filter (only field and group names are sent)">
+                <Sparkles size={12} className={smartBusy ? 'spin' : ''} /> {smartBusy ? 'Filtering…' : 'Filter'}
+              </button>
+            </div>
+          )}
+
           {selected.size > 0 && (
             <>
               <span style={{ fontSize: 12, color: 'var(--text-dim)', marginLeft: 4 }}>{selected.size} selected</span>
@@ -266,6 +302,19 @@ export default function Subscribers() {
             </>
           )}
         </div>
+
+        {smart && (
+          <div style={{ padding: '8px 20px', borderBottom: '1px solid var(--border)', background: 'var(--accent-bg)', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, flexShrink: 0 }}>
+            <Sparkles size={13} color="var(--accent)" />
+            <div style={{ flex: 1 }}>
+              <span style={{ color: 'var(--text-h)' }}>{smart.explanation}</span>
+              <span style={{ color: 'var(--text-dim)' }}> · {total} match{total === 1 ? '' : 'es'}</span>
+              {smart.unsupported && <div style={{ color: 'var(--warning)', marginTop: 2 }}>Not applied: {smart.unsupported}</div>}
+            </div>
+            <button className="btn btn-ghost btn-sm" disabled={!total} onClick={saveSmartAsGroup}><FolderPlus size={12} /> Save as group</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setSmart(null); setSmartQuery('') }}><X size={12} /> Clear</button>
+          </div>
+        )}
 
         {/* Table */}
         <div style={{ flex: 1, overflow: 'auto' }}>
@@ -420,6 +469,10 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
   const [clean, setClean]     = useState(true)
   const [skipRole, setSkipRole] = useState(false)
   const [result, setResult]   = useState(null)
+  const [parsed, setParsed]   = useState(null)   // { rows, headers, fileName }
+  const [mapping, setMapping] = useState({})     // header → target
+  const [mapBusy, setMapBusy] = useState(false)
+  const { ready: aiReady }    = useAiConfig()
   const fileRef = useRef()
 
   const handleDownloadTemplate = () => {
@@ -434,32 +487,57 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
     URL.revokeObjectURL(url)
   }
 
+  // Step 1: read the file and propose a column mapping (rules, then the
+  // values' shape for a missing email column). Nothing is imported yet.
   const handleFile = (e) => {
     const file = e.target.files[0]
     if (!file) return
-    setLoading(true)
     Papa.parse(file, {
       header: true, skipEmptyLines: true,
-      complete: async (result) => {
-        try {
-          const gid = groupId ? Number(groupId) : null
-          const res = await window.api.subscribers.import(result.data, gid, { clean, skipRole })
-          const groupName = gid ? groups.find(g => String(g.id) === String(gid))?.name : null
-          const groupMsg  = groupName ? ` → added to "${groupName}"` : ''
-          toast.success(`Imported: ${res.inserted} new, ${res.updated} updated, ${res.skipped} skipped${groupMsg}`)
-          setLoading(false)
-          setResult(res)
-        } catch (err) {
-          toast.error(`Import failed: ${err?.message || err}`)
-          setLoading(false)
-        }
+      complete: (res) => {
+        const headers = (res.meta.fields || []).filter(h => h && h.trim())
+        if (!headers.length || !res.data.length) { toast.error('The file has no rows'); return }
+        setMapping(findEmailByValues(res.data, headers, autoMapColumns(headers)))
+        setParsed({ rows: res.data, headers, fileName: file.name })
       },
-      error: (err) => {
-        toast.error(`CSV read error: ${err.message}`)
-        setLoading(false)
-      }
+      error: (err) => toast.error(`CSV read error: ${err.message}`),
     })
     e.target.value = ''
+  }
+
+  // Columns the rules couldn't place go to the AI as header + value shape only.
+  const guessWithAi = async () => {
+    const sample = parsed.rows.slice(0, 50)
+    setMapBusy(true)
+    const r = await window.api.ai.mapColumns({
+      columns: parsed.headers.map(h => ({ header: h, shape: describeShape(sample.map(row => row[h])) })),
+    })
+    setMapBusy(false)
+    if (!r.ok) { toast.error(r.error); return }
+    setMapping(m => {
+      const next = { ...m }
+      for (const c of r.columns) next[c.header] = c.target
+      return next
+    })
+    toast.success('Columns mapped. Check them before importing')
+  }
+
+  // Step 2: import with the confirmed mapping.
+  const doImport = async () => {
+    const emailCols = Object.values(mapping).filter(t => t === 'email').length
+    if (emailCols !== 1) { toast.error(emailCols ? 'Pick only one Email column' : 'Pick which column holds the email address'); return }
+    setLoading(true)
+    try {
+      const gid = groupId ? Number(groupId) : null
+      const res = await window.api.subscribers.import(applyMapping(parsed.rows, mapping), gid, { clean, skipRole })
+      const groupName = gid ? groups.find(g => String(g.id) === String(gid))?.name : null
+      const groupMsg  = groupName ? ` → added to "${groupName}"` : ''
+      toast.success(`Imported: ${res.inserted} new, ${res.updated} updated, ${res.skipped} skipped${groupMsg}`)
+      setResult(res)
+    } catch (err) {
+      toast.error(`Import failed: ${err?.message || err}`)
+    }
+    setLoading(false)
   }
 
   if (result) {
@@ -496,6 +574,54 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
           )}
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button className="btn btn-primary" onClick={onDone}><Check size={14} /> Done</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (parsed) {
+    const sample = parsed.rows.slice(0, 50)
+    return (
+      <div className="modal-overlay">
+        <div className="modal" style={{ maxWidth: 620, maxHeight: '90vh', overflow: 'auto' }}>
+          <h3 style={{ marginBottom: 4 }}>Match columns</h3>
+          <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 12 }}>
+            {parsed.fileName}: {parsed.rows.length} rows. Check what each column holds. Custom fields become merge tags like {'{{city}}'}.
+          </p>
+          <table style={{ marginBottom: 12 }}>
+            <thead><tr><th>Column</th><th>Example</th><th>Import as</th></tr></thead>
+            <tbody>
+              {parsed.headers.map(h => {
+                const example = sample.map(r => r[h]).find(v => String(v ?? '').trim()) || ''
+                return (
+                  <tr key={h}>
+                    <td style={{ color: 'var(--text-h)', fontSize: 13 }}>{h}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-dim)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(example)}</td>
+                    <td>
+                      <select className="select" style={{ fontSize: 12, padding: '4px 8px' }} value={mapping[h] || 'custom'}
+                        onChange={e => setMapping(m => ({ ...m, [h]: e.target.value }))}>
+                        {IMPORT_TARGETS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          {aiReady && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <button className="btn btn-ghost btn-sm" disabled={mapBusy} onClick={guessWithAi}>
+                <Sparkles size={12} className={mapBusy ? 'spin' : ''} /> {mapBusy ? 'Guessing…' : 'Guess with AI'}
+              </button>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Sends only the column names and what the values look like (e.g. "dates"), not the values.</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button className="btn btn-ghost" disabled={loading} onClick={() => setParsed(null)}>← Back</button>
+            <button className="btn btn-primary" disabled={loading} onClick={doImport}>
+              {loading ? (clean ? 'Checking & importing…' : 'Importing…') : <><Upload size={14} /> Import {parsed.rows.length} rows</>}
+            </button>
           </div>
         </div>
       </div>
@@ -567,7 +693,7 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
             disabled={loading}
             onClick={() => fileRef.current.click()}
           >
-            {loading ? (clean ? 'Checking & importing…' : 'Importing…') : <><Upload size={14} /> Choose File…</>}
+            <Upload size={14} /> Choose File…
           </button>
         </div>
       </div>

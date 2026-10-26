@@ -10,7 +10,7 @@ Tools like Mailchimp or Brevo charge monthly per-subscriber fees and host your l
 
 ## Features
 
-- Subscriber management — CSV import/export, groups, search, pagination
+- Subscriber management — CSV import/export with a column-matching step, groups, search, pagination, and an AI Smart filter ("active doctors in Chennai never emailed") whose results can be saved as a group
 - List cleaning on import: leaves out invalid, misspelled (`gmial.com`), throwaway and spam-trap addresses, in-file duplicates and domains that can't receive email (optionally role addresses like `info@`). Exports from Mailchimp, beehiiv, Substack and others keep each contact's unsubscribed/bounced status
 - Merge tags with fallbacks: `{{first_name|there}}`, and the pre-send checklist flags tags that won't be filled in
 - Preview text (inbox preheader) per campaign, and a postal address footer for CAN-SPAM
@@ -19,12 +19,12 @@ Tools like Mailchimp or Brevo charge monthly per-subscriber fees and host your l
 - Campaign editor (rich text) with merge fields (`{{name}}`, `{{first_name}}`, custom CSV columns)
 - Batch sending with configurable rate limiting and daily send caps
 - Scheduled sends (including timezone-aware "smart schedule")
-- A/B subject line testing
-- Send history and per-campaign progress
+- A/B subject line testing: a fixed split, or test both subjects on part of the list and send the winner (by Brevo open or click rate) to the rest automatically
+- Send history and per-campaign progress, with failures grouped by cause (address doesn't exist, mailbox full, provider limit, login failed…) and what to do about each
 - Local automation bridge (bearer-token authenticated, localhost-only) for triggering campaigns from n8n or cron
 - Optional Brevo API integration for account/credit stats
 - Desktop notifications (daily summary, campaign reminders, limit reached)
-- AI writing (optional, bring your own key from Claude, OpenAI, Gemini, Groq, Grok, Mistral, DeepSeek or OpenRouter, or run a local model with Ollama): draft a campaign from a short brief, write a follow-up to a sent campaign, draft a reply to a message you received, suggest subject lines, and rewrite selected text. AI pre-send review (Pro) flags spam risk, mistakes, placeholder links and compliance issues
+- AI writing (optional, bring your own key from Claude, OpenAI, Gemini, Groq, Grok, Mistral, DeepSeek or OpenRouter, or run a local model with Ollama): draft a campaign from a short brief, write a whole welcome/nurture sequence as draft campaigns, write a follow-up to a sent campaign, draft a reply to a message you received, suggest subject lines and preview text, write the plain-text version, translate a campaign, rewrite selected text (including turning it into button text), and continue writing from the cursor. AI pre-send review (Pro) flags spam risk, mistakes, placeholder links and compliance issues. AI campaign reports (Pro) in History summarise how a campaign did and suggest next steps
 - Team Sync (Pro): several people share subscribers, campaigns, schedules and history through a private, end-to-end encrypted GitHub repo, with no server needed. Includes a free 7-day trial and a separate test workspace for trying it out. See [TEAM_SYNC.md](TEAM_SYNC.md)
 
 ## Install
@@ -73,7 +73,16 @@ Settings → **AI Writing & Review**: turn it on and paste an API key from any s
 
 Under **Advanced** you can instead use a local model with [Ollama](https://ollama.com) (no key, nothing leaves your computer), any OpenAI-compatible endpoint (LM Studio, vLLM, LocalAI…), choose specific models from the provider's live list, or pick **Mock** to try the screens without a key.
 
-What goes to the AI provider: the brief or text you write, the campaign subject and body, and for follow-ups the delivered/failed counts. Subscriber email addresses, names and custom field values are never sent. The key is stored encrypted with the OS keychain where available and is never synced through Team Sync. Only call metadata (feature, model, tokens, time) is logged locally, no email content. AI output is always shown to you first and can be undone; review results are advice and never block sending.
+What goes to the AI provider: the brief or text you write, the campaign subject, preview text and body, and for the Smart filter and column matching only field, group and campaign names and the column headers with what their values look like (e.g. "dates"), and for follow-ups and reports aggregate counts (sent, bounced, failed, failure causes, Brevo opens/clicks, and your past campaigns' subjects and counts). Subscriber email addresses, names and custom field values are never sent. The key is stored encrypted with the OS keychain where available and is never synced through Team Sync. Only call metadata (feature, model, tokens, time) is logged locally, no email content. AI output is always shown to you first and can be undone; review results are advice and never block sending.
+
+## Tests
+
+```bash
+npm test             # all tests
+npm test -- mailer   # only files whose name contains "mailer"
+```
+
+The suite (`tests/`) runs under Electron's own Node, because `better-sqlite3` is built for Electron. It covers the send loop (merge tags, bounce and quota handling, retries, resume, A/B winner) against a fake SMTP server, imports and the Smart filter on a real SQLite file, Team Sync of the brand voice, and the AI features against a fake provider, including checks that no subscriber data reaches the AI.
 
 ## Compliance note
 

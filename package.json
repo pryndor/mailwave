@@ -13,7 +13,8 @@
     "build:mac": "npm run build:renderer && electron-builder --mac",
     "build:app": "npm run build:linux",
     "build": "npm run build:app",
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node tests/run.js"
   },
   "keywords": [],
   "author": { "name": "Bak.dev", "email": "admin@drugvigil.com" },

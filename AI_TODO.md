@@ -10,8 +10,16 @@ and the pre-send checklist (Pro), `ai_log` table. Tests: fake-API harness (not i
 Decisions taken: fast = `claude-haiku-5-5` (newer and ~10x cheaper than Haiku 4.5), smart =
 `claude-sonnet-5-5`; both editable in Settings. BYO key; writing free, review Pro. Requests to Sonnet 5.5
 use the server-side refusal fallback (`fallbacks: "default"`), since health/drug wording can trip safety
-classifiers. Still open: streaming, preheader (needs a campaign field + mailer
-change), "send subscriber data" toggle (nothing in Phase 1 sends subscriber data).
+classifiers. Still open: streaming, "send subscriber data" toggle (still nothing sends subscriber data:
+the campaign report sends aggregate counts only).
+
+Phase 3 built (2026-10-26): Smart filter + save as group, CSV column mapping, continue writing,
+A/B test with automatic winner, brand voice Team Sync, `npm test` suite (`tests/`, runs under
+Electron's Node for better-sqlite3).
+
+Phase 2 built (2026-10-26): preheader, plain text, translation, CTA rewrite, sequence writer,
+rule-based deliverability/accessibility hints, failure analysis, AI campaign report, automation
+`/ai/*` endpoints. Also fixed: AI buttons stayed disabled for providers without a key (Ollama, custom).
 
 Goal: add AI to MailWave for (1) writing emails, (2) analysing emails before and after sending, and (3) a set of smaller AI helpers that fit the existing app (subscribers, smart schedule, Brevo stats, automation API).
 
@@ -60,15 +68,15 @@ Main place: `Campaigns.jsx` editor + `RichEditor.jsx` toolbar + `Templates.jsx`.
 
 - [x] **Draft from brief**: panel "Write with AI": goal, audience (group), key points, CTA, length, tone. Returns subject + preheader + HTML body + plain text. Must keep merge tags (`{{first_name}}` etc.) valid.
 - [x] **Subject line generator**: 5–10 options with a short reason for each. Click to apply. Feeds A/B testing (section 3).
-- [ ] **Preheader generator**.
+- [x] **Preheader generator**. Drafts, follow-ups, replies and sequences now return preview text too; "Suggest" next to the Preview Text field (`ai:previewText`).
 - [x] **Rewrite selection** (RichEditor toolbar): shorter, longer, friendlier, more formal, fix grammar, simplify, make persuasive.
-- [ ] **Continue writing** from the cursor.
-- [ ] **Generate plain-text version** from HTML (better than stripping tags).
-- [ ] **Translate campaign** into another language, keeping HTML structure and merge tags.
+- [x] **Continue writing** from the cursor. "AI Write → Continue writing from cursor" in the editor (`ai:continue`).
+- [x] **Generate plain-text version** from HTML (better than stripping tags). "Write with AI" next to Plain Text (`ai:plainText`).
+- [x] **Translate campaign** into another language, keeping HTML structure and merge tags. Translate button in the editor (`ai:translate`); warns if links changed; undoable.
 - [ ] **Template generator**: describe a layout, get a responsive, email-safe HTML template (tables, inline CSS) saved into Templates.
-- [ ] **CTA / button text suggestions**.
+- [x] **CTA / button text suggestions**. "Turn into button text" rewrite action.
 - [x] **Reply / follow-up draft**: from a past campaign in History, write the follow-up for non-openers or clickers.
-- [ ] **Sequence writer**: outline + drafts for a welcome / nurture series (3–7 emails) as separate draft campaigns.
+- [x] **Sequence writer**: outline + drafts for a welcome / nurture series (3–7 emails) as separate draft campaigns. "AI Sequence" on the Campaigns page (`ai:sequence`); drafts are named with their send day, never auto-scheduled.
 - [x] Validation after every generation: HTML sanitised, merge tags checked against `subscribers:customFields`, unsubscribe link kept.
 - [x] Undo: AI output always lands as a change the user can revert, never silently overwrites.
 
@@ -78,18 +86,18 @@ Main place: `Campaigns.jsx` editor + `RichEditor.jsx` toolbar + `Templates.jsx`.
 
 ### 2.1 Before sending: extend `PreSendChecklist.jsx`
 - [x] **AI content review** next to the existing `utils/spamCheck.js` rule check: spam risk with reasons, readability grade, tone match with brand voice, length, clarity of CTA.
-- [ ] **Deliverability hints**: image-to-text ratio, link count, link-shortener use, ALL CAPS, missing unsubscribe, missing physical address.
+- [x] **Deliverability hints**: image-to-text ratio, link count, link-shortener use, ALL CAPS, missing unsubscribe, missing physical address. Rule-based in `utils/spamCheck.js` + checklist (postal address, Gmail clip, placeholder and http links).
 - [x] **Mistake finder**: typos, broken or placeholder links ("example.com", "TODO", "lorem"), wrong dates/days, merge tags with no data for many subscribers.
 - [x] **Compliance check**: CAN-SPAM / GDPR basics; optional strict mode for health / pharma claims (unsupported medical claims, missing disclaimers).
-- [ ] **Accessibility check**: missing alt text, low contrast, "click here" links.
+- [x] **Accessibility check**: missing alt text, low contrast, "click here" links. Alt text and vague link text (rule-based); contrast not checked since the editor has no colours.
 - [x] **Subject line score** (0–100) with suggested improvements.
 - [x] Results are advisory: show as warnings, never block sending (critical checks stay rule-based).
 
 ### 2.2 After sending: campaign reports (`History.jsx`, `CampaignMetrics.jsx`, `brevo.js`)
-- [ ] **Campaign summary in plain language**: what went well / badly, compared to the user's own past campaigns (data from `send_history` + Brevo metrics).
-- [ ] **Why did it under-perform?** Link results to subject, send time, length, audience.
-- [ ] **Bounce / failure analysis**: group SMTP error messages in `send_history` into causes (bad address, mailbox full, blocked, rate-limited) with fixes.
-- [ ] **Next-step suggestions**: resend to non-openers with a new subject, clean list, change send time.
+- [x] **Campaign summary in plain language**: what went well / badly, compared to the user's own past campaigns (data from `send_history` + Brevo metrics). History → pick a campaign → "AI campaign report" (Pro, `ai:report`).
+- [x] **Why did it under-perform?** Link results to subject, send time, length, audience. Part of the report (`likely_causes`).
+- [x] **Bounce / failure analysis**: group SMTP error messages in `send_history` into causes (bad address, mailbox full, blocked, rate-limited) with fixes. Rule-based and free: `electron/smtpErrors.js`, shown in History per campaign.
+- [x] **Next-step suggestions**: resend to non-openers with a new subject, clean list, change send time. Part of the report (`next_steps`).
 - [ ] **Dashboard insight card** (`Dashboard.jsx`): weekly "3 things to know" from all campaigns.
 - [ ] **Ask your data**: chat box ("Which group opens most?", "Best day to send last month?"). AI turns the question into a call to safe, read-only query functions in `db.js`; never raw SQL from the model.
 
@@ -98,27 +106,27 @@ Main place: `Campaigns.jsx` editor + `RichEditor.jsx` toolbar + `Templates.jsx`.
 ## 3. Other AI features that fit MailWave
 
 ### Subscribers (`Subscribers.jsx`, `db.js`)
-- [ ] **CSV import mapping**: AI guesses which column is email / first name / country / timezone when headers are messy.
-- [ ] **Data cleaning**: fix name casing, split full names, spot role addresses (info@, admin@), likely typo domains (gmial.com), duplicates.
-- [ ] **Auto-segmentation**: suggest groups from custom fields + engagement (e.g. "engaged doctors in India").
+- [x] **CSV import mapping**: AI guesses which column is email / first name / country / timezone when headers are messy. New "Match columns" step: rules (`utils/importMapping.js`) first, "Guess with AI" for the rest; sends headers and value *shapes* only.
+- [x] **Data cleaning**: fix name casing, split full names, spot role addresses (info@, admin@), likely typo domains (gmial.com), duplicates. Role, typo, duplicate, throwaway, spam-trap and no-MX checks done rule-based at import (`electron/contactChecks.js`); name casing not done.
+- [x] **Auto-segmentation**: suggest groups from custom fields + engagement (e.g. "engaged doctors in India"). Partly: any Smart filter can be saved as a group. No automatic suggestions yet.
 - [ ] **Engagement scoring / churn risk** per subscriber (rule-based score first, AI explains it).
-- [ ] **Natural-language filter**: "subscribers from Germany who never opened" builds the filter.
+- [x] **Natural-language filter**: "subscribers from Germany who never opened" builds the filter. Smart filter on Subscribers (`ai:subscriberFilter` → structured filter → `db.filterSql`, bound parameters only). Opens/clicks aren't tracked per subscriber, so those parts are reported as unsupported.
 
 ### Personalisation and sending (`mailer.js`, `smartSchedule.js`)
 - [ ] **Per-recipient personalised opening line** from custom fields (Pro, opt-in, batched, cost shown before running).
 - [ ] **Dynamic content blocks**: different paragraph variants per group, chosen at send time.
 - [ ] **AI send-time advice**: extend Smart Schedule with each subscriber's past open times (when Brevo data exists).
-- [ ] **Subject A/B test**: split a small sample, pick the winner automatically, send the rest. Needs new campaign fields (`variant`, `test_size`, `winner_rule`).
+- [x] **Subject A/B test**: split a small sample, pick the winner automatically, send the rest. Needs new campaign fields (`variant`, `test_size`, `winner_rule`). "Test, then send the winner" mode: `ab_mode`, `ab_test_pct`, `ab_wait_hours`, `ab_metric`, `ab_winner`; winner from Brevo open/click rates, subject A kept without stats.
 
 ### Templates
 - [ ] **Template from screenshot / URL**: rebuild an email layout as editable HTML (Claude vision).
 - [ ] **Image alt text generator** for images in the editor.
 
 ### Automation API (`automation-server.js`)
-- [ ] Expose `POST /ai/draft` and `POST /ai/analyse` so n8n flows can create AI drafts (Pro, token-protected like other endpoints).
+- [x] Expose `POST /ai/draft` and `POST /ai/analyse` so n8n flows can create AI drafts (Pro, token-protected like other endpoints). `POST /ai/draft` (optionally `save: true`), `POST /ai/review`, `POST /ai/report`.
 
 ### Team Sync
-- [ ] Sync the brand voice profile and saved AI prompts through `teamStore.js` (but never the API key).
+- [x] Sync the brand voice profile and saved AI prompts through `teamStore.js` (but never the API key). Brand voice syncs (`brand` entity). There are no saved prompts to sync yet.
 
 ### Assistant
 - [ ] **In-app help assistant**: answers "how do I…" questions about MailWave settings (SMTP setup, daily limits, Team Sync), using README / TEAM_SYNC.md as context.
@@ -164,7 +172,7 @@ Main place: `Campaigns.jsx` editor + `RichEditor.jsx` toolbar + `Templates.jsx`.
 ## 6. Testing
 
 - [x] Mock provider in `ai.js` (returns fixed output) so features work in dev without a key.
-- [ ] Golden tests for prompts: merge tags kept, unsubscribe link kept, valid HTML.
+- [x] Golden tests for prompts: merge tags kept, unsubscribe link kept, valid HTML. `tests/ai.test.js` (`npm test`): prompt rules, strict schemas, sanitising, tag/link checks.
 - [ ] Test with Ollama offline and with no key (features hidden or show "Set up AI").
-- [ ] Check no subscriber data is sent when the privacy toggle is off (log outgoing payloads in dev).
+- [x] Check no subscriber data is sent when the privacy toggle is off (log outgoing payloads in dev). `tests/ai.test.js` asserts no addresses, names or field values reach the provider in the Smart filter and report prompts.
 - [ ] Cost check: tokens per feature on a typical campaign, shown in Settings.

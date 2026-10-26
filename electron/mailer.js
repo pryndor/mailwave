@@ -5,6 +5,8 @@ const path       = require('path');
 const settings   = require('./settings');
 const db         = require('./db');
 const teamSync   = require('./teamSync');
+const { classifySmtpError } = require('./smtpErrors');
+const brevo      = require('./brevo');
 
 // Per-campaign stop requests — a module-level bool would let concurrent sends
 // (e.g. auto-resume firing while another campaign is mid-send) cancel each other.
@@ -201,31 +203,8 @@ function calcNextResumeTime(timeStr) {
   return tomorrow.toISOString();
 }
 
-// ── SMTP error classification ────────────────────────────────────────────────
-// What a failed sendMail means for the rest of the send:
-//   bounce     — the address doesn't exist: mark the subscriber bounced, go on
-//   quota      — the provider's sending limit: pause until the daily resume time
-//   blocked    — the provider flagged the account (spam, policy): pause until someone looks
-//   auth       — the SMTP login stopped working: pause until someone looks
-//   transient  — connection dropped or "try again later": wait and retry the same address
-//   failed     — anything else about this one message: log it, go on
-const QUOTA_PATTERN   = /quota|limit (?:exceeded|reached)|exceeded|too many (?:messages|emails|recipients)|sending rate|rate limit|daily (?:sending )?limit|5\.4\.5/i;
-const BLOCKED_PATTERN = /unusual sending|suspicious|account (?:has been )?(?:blocked|suspended|disabled|locked)|sender (?:address )?(?:blocked|rejected)|spam|5\.7\.1 .*(?:policy|abuse)|relay access denied|not authori[sz]ed to send/i;
-const BOUNCE_PATTERN  = /user unknown|unknown user|no such user|does not exist|doesn't exist|mailbox (?:unavailable|not found)|invalid (?:recipient|mailbox|address)|recipient (?:address )?rejected|address rejected|undeliverable|no mailbox|5\.1\.[0-6]/i;
-const TRANSIENT_CODES = new Set(['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'EDNS', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH']);
-
-function classifySmtpError(err) {
-  const code     = err?.code || '';
-  const response = Number(err?.responseCode) || 0;
-  const text     = `${err?.response || ''} ${err?.message || ''}`;
-  if (code === 'EAUTH' || response === 535 || response === 534) return 'auth';
-  if (QUOTA_PATTERN.test(text)) return 'quota';
-  if (BLOCKED_PATTERN.test(text)) return 'blocked';
-  if (TRANSIENT_CODES.has(code) || response === 421 || (response >= 400 && response < 500)) return 'transient';
-  if (response >= 500 && (BOUNCE_PATTERN.test(text) || ([550, 551, 553].includes(response) && code === 'EENVELOPE'))) return 'bounce';
-  return 'failed';
-}
-
+// ── SMTP error handling ──────────────────────────────────────────────────────
+// classifySmtpError (electron/smtpErrors.js) says what a failure means.
 // Waits before retrying the same address after a transient error. After the
 // last one fails too, the campaign pauses and resumes by itself later.
 const RETRY_DELAYS_MS  = [30 * 1000, 2 * 60 * 1000, 5 * 60 * 1000];
@@ -235,6 +214,24 @@ const TRANSIENT_RESUME_MS = 30 * 60 * 1000;
 const BOUNCE_STOP_RATE    = 0.02;
 const BOUNCE_STOP_MIN     = 100;     // attempts before the rate counts
 const FAILURE_STREAK_STOP = 10;      // failures in a row, of any kind
+
+// ── A/B winner ────────────────────────────────────────────────────────────────
+// Compares the two test variants' Brevo stats. Without Brevo stats (no key,
+// or the sends didn't go through Brevo) there is nothing to compare, so
+// subject A goes out and the reason says why.
+async function pickAbWinner(campaign, cfg) {
+  const metric = campaign.ab_metric === 'clicks' ? 'clicks' : 'opens';
+  if (!cfg.brevo_api_key) return { winner: 'a', reason: 'no Brevo API key to read opens and clicks from, so subject A was kept' };
+  const sentHere = db.campaignSentHere(campaign.id);
+  const [a, b] = await Promise.all(['a', 'b'].map(v =>
+    brevo.getCampaignMetricsFor(cfg.brevo_api_key, campaign, v, sentHere).catch(err => ({ ok: false, error: err.message }))));
+  if (!a.ok || !b.ok) return { winner: 'a', reason: `Brevo stats unavailable (${a.error || b.error}), so subject A was kept` };
+  if (!a.requests || !b.requests) return { winner: 'a', reason: 'Brevo has no stats for the test sends, so subject A was kept' };
+  const rate = (m) => m[metric] / m.requests;
+  const ra = rate(a), rb = rate(b);
+  const pct = (r) => `${(r * 100).toFixed(1)}%`;
+  return { winner: rb > ra ? 'b' : 'a', reason: `${metric === 'clicks' ? 'click' : 'open'} rate A ${pct(ra)} vs B ${pct(rb)}${ra === rb ? ', a tie keeps A' : ''}` };
+}
 
 // ── Main send ─────────────────────────────────────────────────────────────────
 // With Team Sync on, a real send first claims the campaign's lock in the team
@@ -338,9 +335,32 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0, resume =
     }
   };
 
-  // A/B split — index is relative to the full list
-  const isAB    = !preview_to && campaign.ab_subject_b && campaign.ab_subject_b.trim();
-  const splitAt = isAB ? Math.floor(allSubscribers.length * (campaign.ab_split_pct || 50) / 100) : allSubscribers.length;
+  // A/B split — index is relative to the full list.
+  //   split:  subject A to the first ab_split_pct%, B to the rest
+  //   winner: the first ab_test_pct% is the test (A and B alternate), then the
+  //           send pauses for ab_wait_hours; on resume the subject with the
+  //           better Brevo open (or click) rate goes to everyone else.
+  const isAB     = !preview_to && campaign.ab_subject_b && campaign.ab_subject_b.trim();
+  const splitAt  = isAB ? Math.floor(allSubscribers.length * (campaign.ab_split_pct || 50) / 100) : allSubscribers.length;
+  const isWinner = isAB && campaign.ab_mode === 'winner';
+  const testSize = isWinner ? Math.min(total, Math.max(2, Math.round(total * campaign.ab_test_pct / 100))) : 0;
+  let winner     = isWinner && resume ? campaign.ab_winner : '';
+  if (isWinner && !resume) db.setAbWinner(campaign_id, '');
+  if (isWinner && !winner && !subscribers.some(({ idx }) => idx < testSize)) {
+    const pick = await pickAbWinner(campaign, cfg);
+    winner = pick.winner;
+    db.setAbWinner(campaign_id, winner);
+    const winningSubject = winner === 'b' ? campaign.ab_subject_b : campaign.subject;
+    db.addNotification('ab_winner', `A/B Test: Subject ${winner.toUpperCase()} Won`,
+      `"${campaign.name}": "${winningSubject}" goes to the remaining ${total - testSize} subscribers (${pick.reason}).`, campaign_id);
+    pushNotif();
+  }
+  const variantFor = (idx) => {
+    if (!isAB) return 'a';
+    if (!isWinner) return idx >= splitAt ? 'b' : 'a';
+    if (idx < testSize) return idx % 2 === 0 ? 'a' : 'b';
+    return winner || 'a';
+  };
 
   for (let i = 0; i < subscribers.length; i++) {
     if (stopRequested.has(campaign_id)) {
@@ -375,10 +395,19 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0, resume =
     }
 
     const { sub, idx: globalIdx } = subscribers[i];   // globalIdx: position in full subscriber list
+
+    // Winner mode: the test is out, wait for opens before sending the rest.
+    if (isWinner && !winner && globalIdx >= testSize) {
+      const resumeAt = new Date(Date.now() + campaign.ab_wait_hours * 3600 * 1000).toISOString();
+      const at = new Date(resumeAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+      return pause(i, 'A/B Test Sent',
+        `both subjects went to ${testSize} test subscribers. The winner by ${campaign.ab_metric} is picked ${at} and sent to the other ${total - testSize}.`, resumeAt);
+    }
+
     const unsubUrl  = buildUnsubUrl(sub.email, campaign_id, cfg);
     const msgId     = makeMessageId(fromEmail);
 
-    const variant     = isAB && globalIdx >= splitAt ? 'b' : 'a';
+    const variant     = variantFor(globalIdx);
     const subjectLine = (isAB && variant === 'b') ? campaign.ab_subject_b : campaign.subject;
     const abTag       = isAB ? `campaign-${statsId}-${variant}` : `campaign-${statsId}`;
     const subject     = personalizeSubject(subjectLine, sub, unsubUrl, { customKeys });
@@ -465,7 +494,7 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0, resume =
       failStreak = 0;
       logRow('bounced', error.message);
       db.markSubscriberBounced(sub.id);
-    } else if (kind === 'failed') {
+    } else if (kind === 'failed' || kind === 'mailbox_full') {
       failed++;
       failStreak++;
       logRow('failed', error.message);

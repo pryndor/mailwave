@@ -22,6 +22,7 @@ const AI_ACTIONS = [
   { id: 'friendlier', label: 'Friendlier' },
   { id: 'formal',     label: 'More formal' },
   { id: 'persuasive', label: 'More persuasive' },
+  { id: 'cta',        label: 'Turn into button text' },
 ]
 
 const escapeHtml = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -119,6 +120,24 @@ export default function RichEditor({ value, onChange, customTags = [], aiReady =
     toast.success('Rewritten. Use Undo to go back')
   }
 
+  // Writes the next paragraph or two at the cursor, from the text around it.
+  // Also a normal editor change, so Undo removes it.
+  const aiContinue = async () => {
+    const { to } = editor.state.selection
+    const doc = editor.state.doc
+    const before = doc.textBetween(0, to, '\n\n')
+    const after  = doc.textBetween(to, doc.content.size, '\n\n')
+    if (!before.trim()) { toast.error('Write the start of the email, then put the cursor where it should continue'); return }
+    setShowAi(false)
+    setAiBusy(true)
+    const r = await window.api.ai.continueWriting({ before, after })
+    setAiBusy(false)
+    if (!r.ok) { toast.error(r.error); return }
+    const content = r.text.split(/\n{2,}/).map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('')
+    editor.chain().focus().insertContentAt(to, content).run()
+    toast.success('Added. Use Undo to remove it')
+  }
+
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'visible' }}>
       {/* Toolbar */}
@@ -149,7 +168,7 @@ export default function RichEditor({ value, onChange, customTags = [], aiReady =
             <div style={{ width: 1, background: 'var(--border)', margin: '0 4px' }} />
             <div ref={aiRef} style={{ position: 'relative' }}>
               <button
-                title="Rewrite the selected text with AI"
+                title="Continue writing, or rewrite the selected text with AI"
                 disabled={aiBusy}
                 onMouseDown={e => { e.preventDefault(); setShowAi(v => !v) }}
                 style={{
@@ -159,7 +178,7 @@ export default function RichEditor({ value, onChange, customTags = [], aiReady =
                   color: showAi || aiBusy ? 'var(--accent)' : 'var(--text)', fontSize: 12, fontWeight: 500,
                 }}
               >
-                <Sparkles size={13} className={aiBusy ? 'spin' : ''} /> {aiBusy ? 'Rewriting…' : 'AI Rewrite'}
+                <Sparkles size={13} className={aiBusy ? 'spin' : ''} /> {aiBusy ? 'Writing…' : 'AI Write'}
               </button>
               {showAi && (
                 <div style={{
@@ -168,7 +187,13 @@ export default function RichEditor({ value, onChange, customTags = [], aiReady =
                   borderRadius: 'var(--radius)', boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
                   minWidth: 230, padding: 6,
                 }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', padding: '4px 8px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <button
+                    onMouseDown={e => { e.preventDefault(); aiContinue() }}
+                    style={{ display: 'block', width: '100%', padding: '6px 10px', border: 'none', borderRadius: 4, background: 'transparent', cursor: 'pointer', textAlign: 'left', color: 'var(--accent)', fontSize: 12, fontWeight: 500 }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bg3)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >Continue writing from cursor</button>
+                  <div style={{ fontSize: 11, color: 'var(--text-dim)', padding: '8px 8px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', borderTop: '1px solid var(--border)', marginTop: 4 }}>
                     Rewrite selected text
                   </div>
                   {AI_ACTIONS.map(a => (

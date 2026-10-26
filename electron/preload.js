@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
     delete: (ids)  => invoke('subscribers:delete', ids),
     import: (rows, group_id, opts) => invoke('subscribers:import', rows, group_id, opts),
     checkEmail: (email) => invoke('subscribers:checkEmail', email),
+    filterToGroup: (data) => invoke('subscribers:filterToGroup', data),
     export: ()     => invoke('subscribers:export'),
     stats:  ()     => invoke('subscribers:stats'),
     customFields: () => invoke('subscribers:customFields'),
@@ -74,6 +75,7 @@ contextBridge.exposeInMainWorld('api', {
   // History
   history: {
     list: (opts) => invoke('history:list', opts),
+    failures: (campaign_id) => invoke('history:failures', campaign_id),
   },
 
   // File dialogs
@@ -91,6 +93,7 @@ contextBridge.exposeInMainWorld('api', {
   brevo: {
     stats:           ()   => invoke('brevo:stats'),
     today:           ()   => invoke('brevo:today'),
+    hasKey:          ()   => invoke('brevo:hasKey'),
     campaignMetrics: (id, variant) => invoke('brevo:campaignMetrics', id, variant),
   },
 
@@ -147,6 +150,14 @@ contextBridge.exposeInMainWorld('api', {
     subjects:   (opts) => invoke('ai:subjects', opts),
     rewrite:    (opts) => invoke('ai:rewrite', opts),
     review:     (camp) => invoke('ai:review', camp),
+    previewText: (opts) => invoke('ai:previewText', opts),
+    plainText:  (opts) => invoke('ai:plainText', opts),
+    translate:  (opts) => invoke('ai:translate', opts),
+    sequence:   (brief) => invoke('ai:sequence', brief),
+    report:     (opts) => invoke('ai:report', opts),
+    subscriberFilter: (opts) => invoke('ai:subscriberFilter', opts),
+    mapColumns: (opts) => invoke('ai:mapColumns', opts),
+    continueWriting: (opts) => invoke('ai:continue', opts),
   },
 
   // ── IPC event listeners ────────────────────────────────────────────────────

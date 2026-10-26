@@ -138,12 +138,13 @@ function sanitizeHtml(html = '') {
     .replace(/^\s*```(?:html)?\s*|\s*```\s*$/g, '');
 }
 
+// Same tag grammar as mailer.js personalize(): {{key}} or {{key|fallback}}.
 function unknownMergeTags(...parts) {
-  const known = new Set([...P.BUILTIN_TAGS, ...db.listCustomFieldKeys()]);
+  const known = new Set([...P.BUILTIN_TAGS, ...db.listCustomFieldKeys()].map(k => k.toLowerCase()));
   const found = new Set();
   for (const part of parts) {
-    for (const m of String(part || '').matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
-      if (!known.has(m[1])) found.add(m[1]);
+    for (const m of String(part || '').matchAll(/\{\{\s*([^{}|]+?)\s*(?:\|[^{}]*)?\}\}/g)) {
+      if (!known.has(m[1].toLowerCase())) found.add(m[1]);
     }
   }
   return [...found];
@@ -154,13 +155,14 @@ const placeholders = (...parts) =>
 
 function finishEmail(out) {
   const email = {
-    subject: String(out.subject || '').trim(),
-    html:    sanitizeHtml(out.html),
-    text:    String(out.text || '').trim(),
-    notes:   String(out.notes || '').trim(),
+    subject:      String(out.subject || '').trim(),
+    preview_text: String(out.preview_text || '').trim(),
+    html:         sanitizeHtml(out.html),
+    text:         String(out.text || '').trim(),
+    notes:        String(out.notes || '').trim(),
   };
   const warnings = [];
-  const unknown = unknownMergeTags(email.subject, email.html, email.text);
+  const unknown = unknownMergeTags(email.subject, email.preview_text, email.html, email.text);
   if (unknown.length) warnings.push(`Unknown merge tags (will not be filled): ${unknown.map(t => `{{${t}}}`).join(', ')}`);
   const ph = placeholders(email.subject, email.html);
   if (ph.length) warnings.push(`Fill in before sending: ${ph.join(', ')}`);
@@ -278,6 +280,244 @@ async function rewrite({ text = '', action = 'grammar', custom = '' } = {}) {
     feature: 'rewrite', tier: 'fast', effort: 'low', maxTokens: 4000,
     system: P.writerSystem(cfg, db.listCustomFieldKeys()),
     user, schema: P.REWRITE_SCHEMA,
+  });
+  return { ok: true, text: String(out.text || '').trim() };
+}
+
+// Preview text (preheader) options that add to the subject instead of repeating it.
+async function previewText({ subject = '', html = '', preview_text = '' } = {}) {
+  const body = stripHtml(html);
+  if (!body) throw new AiError('Write the email body first, so there is something to base the preview text on.', 'input');
+  const cfg = settings.getAll();
+  const user =
+    `Suggest 5 preview texts (the line inboxes show after the subject) for this email. Each should add something the subject doesn't say, ` +
+    `be true to the body, and be 40-110 characters. Vary them: a benefit, a detail from the body, a question, a personal line with a merge tag fallback.\n\n` +
+    field('Subject', subject || '(none yet)') +
+    field('Current preview text', preview_text) +
+    `<email_body>\n${body.slice(0, 6000)}\n</email_body>`;
+  const out = await complete({
+    feature: 'preview_text', tier: 'fast', effort: 'low', maxTokens: 3000,
+    system: P.writerSystem(cfg, db.listCustomFieldKeys()),
+    user, schema: P.PREVIEW_TEXT_SCHEMA,
+  });
+  return { ok: true, options: (out.options || []).slice(0, 5).map(o => ({ text: String(o.text || '').trim(), reason: o.reason })) };
+}
+
+// A real plain-text version (headings, lists and links written out) instead
+// of the tag-stripped fallback the mailer would otherwise generate.
+async function plainText({ html = '' } = {}) {
+  if (!stripHtml(html)) throw new AiError('The email body is empty.', 'input');
+  const user =
+    `Write the plain-text version of this HTML email for mail clients that can't show HTML. Keep every word of the content and its order; ` +
+    `change nothing in the wording. Write headings on their own line, list items as "- item", and links as "link text (url)". ` +
+    `Keep merge tags exactly as they are. Blank line between paragraphs. Return only the text.\n\n<email_html>\n${html}\n</email_html>`;
+  const out = await complete({
+    feature: 'plain_text', tier: 'fast', effort: 'low', maxTokens: 8000,
+    system: P.writerSystem(settings.getAll(), db.listCustomFieldKeys()),
+    user, schema: P.REWRITE_SCHEMA,
+  });
+  return { ok: true, text: String(out.text || '').trim() };
+}
+
+const hrefs = (html) => [...String(html || '').matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(m => m[1]).sort();
+
+// Translates the whole campaign, keeping HTML structure, links and merge tags.
+async function translate({ language = '', subject = '', ab_subject_b = '', preview_text = '', html = '', text = '' } = {}) {
+  if (!language.trim()) throw new AiError('Choose the language to translate into.', 'input');
+  if (!stripHtml(html) && !subject.trim()) throw new AiError('The campaign is empty.', 'input');
+  const user =
+    `Translate this email campaign into ${language.trim()}. Write it the way a native speaker would write this email, not word for word, ` +
+    `in the same tone. Keep every HTML tag, attribute and link exactly as it is and translate only the visible text. ` +
+    `Keep merge tags exactly as they are, but translate a fallback after the "|" (e.g. {{first_name|there}}). ` +
+    `Leave brand and product names untranslated. Return empty strings for parts that are empty below.\n\n` +
+    `<subject>${subject}</subject>\n<ab_subject_b>${ab_subject_b}</ab_subject_b>\n<preview_text>${preview_text}</preview_text>\n` +
+    `<email_html>\n${html}\n</email_html>\n<plain_text>\n${text}\n</plain_text>`;
+  const out = await complete({
+    feature: 'translate', tier: 'smart', effort: 'low', maxTokens: 16000,
+    system: P.writerSystem(settings.getAll(), db.listCustomFieldKeys()),
+    user, schema: P.TRANSLATION_SCHEMA,
+  });
+  const result = finishEmail(out);
+  result.ab_subject_b = String(out.ab_subject_b || '').trim();
+  const before = hrefs(html), after = hrefs(result.html);
+  if (before.join('\n') !== after.join('\n')) {
+    result.warnings.unshift('Links changed during translation. Check every link before sending.');
+  }
+  return result;
+}
+
+const SPACINGS = { tight: 'every 1-2 days', normal: 'every 2-4 days', relaxed: 'about once a week' };
+
+// A welcome / nurture series: several emails that build on each other, each
+// returned as a draft the user saves as its own campaign.
+async function sequence(brief = {}) {
+  if (!brief.goal?.trim()) throw new AiError('Describe what the series is for.', 'input');
+  const count = Math.min(Math.max(Number(brief.count) || 4, 3), 7);
+  const cfg = settings.getAll();
+  const user =
+    `Write a series of ${count} emails that go out one after another to the same people.\n\n` +
+    field('Series goal', brief.goal) +
+    field('Audience', brief.audience) +
+    field('Key points to cover across the series', brief.keyPoints) +
+    field('Final call to action', brief.cta) +
+    field('Tone for this series (overrides the default)', brief.tone && P.TONES[brief.tone]) +
+    `Spacing: ${SPACINGS[brief.spacing] || SPACINGS.normal}.\n\n` +
+    `Each email has one job and one call to action, can be read on its own, and doesn't repeat the previous one. ` +
+    `Build up to the final call to action. Keep each email short (about 100-200 words). The first email goes out on day 0.`;
+  const out = await complete({
+    feature: 'sequence', tier: 'smart', effort: 'medium', maxTokens: 24000,
+    system: P.writerSystem(cfg, db.listCustomFieldKeys()),
+    user, schema: P.SEQUENCE_SCHEMA,
+  });
+  const emails = (out.emails || []).slice(0, count).map((e, i) => ({
+    ...finishEmail({ ...e, notes: '' }),
+    day: Math.max(0, Number(e.day) || 0),
+    purpose: String(e.purpose || `Email ${i + 1}`).trim(),
+  }));
+  if (!emails.length) throw new AiError('The AI returned no emails. Try again.', 'parse');
+  return { ok: true, plan: String(out.plan || '').trim(), notes: String(out.notes || '').trim(), emails };
+}
+
+// Brevo open/click stats for a campaign (or one A/B variant), when a Brevo key
+// is set. Same tags as the brevo:campaignMetrics handler in main.js.
+async function brevoMetrics(camp, variant = '') {
+  const key = settings.getAll().brevo_api_key;
+  if (!key) return null;
+  const m = await require('./brevo').getCampaignMetricsFor(key, camp, variant, db.campaignSentHere(camp.id));
+  return m.ok && m.requests > 0 ? m : null;
+}
+
+const pct = (n, d) => d ? `${(n / d * 100).toFixed(1)}%` : 'n/a';
+
+// After-send report — Pro feature, like review. Sends aggregate numbers and
+// the campaign's own content only: no addresses or names.
+async function report({ campaign_id } = {}) {
+  if (!license.isPro(settings.getAll().license_key)) {
+    throw new AiError('AI campaign reports are a Pro feature.', 'pro_required');
+  }
+  const camp = db.getCampaign(campaign_id);
+  if (!camp) throw new AiError('Campaign not found.', 'input');
+  const summary = db.campaignSendSummary(campaign_id);
+  const attempted = summary.sent + summary.failed;
+  if (!attempted) throw new AiError('This campaign has no sends yet.', 'input');
+
+  const failures = db.campaignFailureGroups(campaign_id);
+  const past = db.recentCampaignStats(campaign_id, 10);
+  const isAB = !!camp.ab_subject_b?.trim();
+  const [metrics, metricsA, metricsB] = await Promise.all([
+    brevoMetrics(camp).catch(() => null),
+    isAB ? brevoMetrics(camp, 'a').catch(() => null) : null,
+    isAB ? brevoMetrics(camp, 'b').catch(() => null) : null,
+  ]);
+  const sentAt = camp.sent_at ? new Date(camp.sent_at) : null;
+
+  const brevoLine = (label, m) => m
+    ? `${label}: ${m.requests} requests, ${m.delivered} delivered, ${m.opens} unique opens (${m.open_rate}%), ${m.clicks} unique clicks (${m.click_rate}%), ${m.bounces} bounces, ${m.spam} spam reports, ${m.unsubscribed} unsubscribes\n`
+    : '';
+  const user =
+    `Report on how this campaign did and what to do next.\n\n` +
+    `<campaign>\n` +
+    field('Name', camp.name) +
+    field('Subject', camp.subject) +
+    field('Subject B (A/B test)', isAB ? `${camp.ab_subject_b} (first ${camp.ab_split_pct}% got subject A)` : '') +
+    field('Preview text', camp.preview_text || '(none)') +
+    field('Sent', sentAt ? `${sentAt.toISOString()} (${sentAt.toLocaleString('en-US', { weekday: 'long', hour: 'numeric', minute: '2-digit' })} local time)` : '') +
+    `Body length: ${stripHtml(camp.html).split(/\s+/).filter(Boolean).length} words, ${(camp.html.match(/<a\s/gi) || []).length} links\n` +
+    `Body:\n${stripHtml(camp.html).slice(0, 4000)}\n</campaign>\n\n` +
+    `<delivery>\nAttempted: ${attempted}. Sent: ${summary.sent}. Bounced (address doesn't exist): ${summary.bounced} (${pct(summary.bounced, attempted)}). ` +
+    `Other failures: ${summary.failed - summary.bounced} (${pct(summary.failed - summary.bounced, attempted)}).\n` +
+    (failures.length ? `Failures by cause: ${failures.map(f => `${f.label}: ${f.count}`).join('; ')}\n` : '') +
+    `</delivery>\n\n` +
+    `<brevo_stats>\n${metrics || metricsA ? brevoLine('Whole campaign', metrics) + brevoLine('Subject A', metricsA) + brevoLine('Subject B', metricsB) : 'Not available (Brevo not connected, or no data for this campaign).'}\n</brevo_stats>\n\n` +
+    `<past_campaigns>\n${past.length
+      ? past.map(c => `- "${c.subject}" (${c.sent_at || 'unknown date'}): ${c.sent} sent, ${c.bounced} bounced, ${c.failed} failed`).join('\n')
+      : 'None yet.'}\n</past_campaigns>`;
+  const out = await complete({
+    feature: 'report', tier: 'smart', effort: 'medium', maxTokens: 6000,
+    system: P.analystSystem(),
+    user, schema: P.REPORT_SCHEMA,
+  });
+  return {
+    ok: true, ...out,
+    stats: { attempted, sent: summary.sent, bounced: summary.bounced, failed: summary.failed - summary.bounced, brevo: metrics || null },
+    failures,
+  };
+}
+
+// Smart filter: a question about the list becomes a structured filter that
+// db.listSubscribers applies with bound parameters. Only field names, group
+// names and campaign names are sent, never subscribers or their values.
+async function subscriberFilter({ query = '' } = {}) {
+  if (!query.trim()) throw new AiError('Describe which subscribers you want.', 'input');
+  const fields = ['email', 'name', 'first_name', 'last_name', 'phone', 'company', ...db.listCustomFieldKeys()];
+  const groups = db.listGroups().map(g => g.name);
+  const campaigns = db.listCampaigns().slice(0, 50).map(c => c.name);
+  const today = new Date().toISOString().slice(0, 10);
+  const user =
+    `Turn this request into a subscriber filter.\n\n<request>${query.trim()}</request>\n\n` +
+    `Today is ${today}.\n` +
+    `Fields (use these exact names in conditions; "city", "country" and the like only if listed): ${fields.join(', ')}\n` +
+    `Groups: ${groups.length ? groups.join(' | ') : '(none)'}\n` +
+    `Campaigns: ${campaigns.length ? campaigns.join(' | ') : '(none)'}\n\n` +
+    `Rules: use "any"/empty/"none" for parts the request doesn't mention. A request for people who "haven't heard from us" means emailed.mode not_within_days. ` +
+    `Opens, clicks and replies aren't tracked per subscriber: say so in "unsupported" instead of guessing. ` +
+    `If a field or group the request needs doesn't exist, use the closest listed one only if it clearly means the same; otherwise put it in "unsupported".`;
+  const out = await complete({
+    feature: 'subscriber_filter', tier: 'fast', effort: 'low', maxTokens: 3000,
+    system: 'You translate plain-language requests about an email list into a structured filter. You only ever output the filter.',
+    user, schema: P.FILTER_SCHEMA,
+  });
+  const knownFields = new Set(fields.map(f => f.toLowerCase()));
+  const knownGroups = new Map(groups.map(g => [g.toLowerCase(), g]));
+  const ignored = [];
+  const filter = {
+    status: out.status === 'any' ? undefined : out.status,
+    groups: (out.groups || []).filter(g => knownGroups.has(String(g).toLowerCase()) || (ignored.push(`group "${g}"`), false)),
+    groups_mode: out.groups_mode === 'none' ? 'none' : 'any',
+    email_domains: out.email_domains || [],
+    conditions: (out.conditions || []).filter(c => knownFields.has(String(c.field).toLowerCase()) || (ignored.push(`field "${c.field}"`), false)),
+    added_after: out.added_after || undefined,
+    added_before: out.added_before || undefined,
+    emailed: out.emailed?.mode && out.emailed.mode !== 'none' ? out.emailed : undefined,
+  };
+  return { ok: true, filter, explanation: out.explanation, unsupported: [out.unsupported, ...ignored.map(i => `Unknown ${i} left out`)].filter(Boolean).join('. ') };
+}
+
+// CSV import: which column holds what, for headers the rules didn't recognise.
+// Only headers and the *shape* of their values are sent (e.g. "looks like an
+// email address"), never the values themselves.
+async function mapColumns({ columns = [] } = {}) {
+  if (!columns.length) throw new AiError('No columns to map.', 'input');
+  const user =
+    `Map these CSV columns from a contact list export to MailWave subscriber fields. ` +
+    `Targets: email, name (full name), first_name, last_name, phone, company, status (subscribed/unsubscribed/bounced), ` +
+    `custom (anything else worth keeping as a merge field, e.g. city, plan, signup source), skip (IDs, timestamps nobody personalises with, internal columns). ` +
+    `Map at most one column to email, and only one each to name, first_name, last_name.\n\n` +
+    columns.map(c => `- "${c.header}": ${c.shape}`).join('\n');
+  const out = await complete({
+    feature: 'map_columns', tier: 'fast', effort: 'low', maxTokens: 3000,
+    system: 'You map spreadsheet columns to fields of an email contact list.',
+    user, schema: P.COLUMN_MAP_SCHEMA,
+  });
+  const headers = new Set(columns.map(c => c.header));
+  return { ok: true, columns: (out.columns || []).filter(c => headers.has(c.header) && P.IMPORT_TARGETS.includes(c.target)) };
+}
+
+// Continue writing from the cursor: the text before it, and after it if any.
+async function continueWriting({ before = '', after = '' } = {}) {
+  if (!before.trim()) throw new AiError('Write the start of the email first, then put the cursor where it should continue.', 'input');
+  const cfg = settings.getAll();
+  const user =
+    `Continue this email from where the text before the cursor stops. Write one or two short paragraphs (at most about 80 words) ` +
+    `that follow naturally, in the same voice and language. Don't repeat what's there, don't sign off unless the email is clearly at its end` +
+    (after.trim() ? `, and lead into the text that comes after the cursor.` : '.') +
+    ` Keep merge tags as they are. Plain text, blank line between paragraphs.\n\n` +
+    `<before_cursor>\n${before.slice(-4000)}\n</before_cursor>` +
+    (after.trim() ? `\n<after_cursor>\n${after.slice(0, 1500)}\n</after_cursor>` : '');
+  const out = await complete({
+    feature: 'continue', tier: 'fast', effort: 'low', maxTokens: 2000,
+    system: P.writerSystem(cfg, db.listCustomFieldKeys()),
+    user, schema: P.CONTINUE_SCHEMA,
   });
   return { ok: true, text: String(out.text || '').trim() };
 }
@@ -440,6 +680,7 @@ function mockResponse(feature) {
   db.logAiCall({ feature, model: 'mock' });
   const email = {
     subject: 'Quick update for you, {{first_name}}',
+    preview_text: 'A short mock preview line',
     html: '<p>Hi {{first_name}},</p><p>This is a <strong>mock AI draft</strong>. Switch the AI provider to Anthropic in Settings to get real output.</p><p><a href="[link]">See what is new</a></p><p>Thanks,<br>The team</p>',
     text: 'Hi {{first_name}},\n\nThis is a mock AI draft. Switch the AI provider to Anthropic in Settings to get real output.\n\nSee what is new ([link])\n\nThanks,\nThe team',
     notes: 'Mock output. Replace [link] before sending.',
@@ -450,7 +691,29 @@ function mockResponse(feature) {
       { subject: 'Three things worth knowing this week', reason: 'Clear, scannable promise' },
       { subject: 'Did you see this yet?', reason: 'Light curiosity' },
     ] };
-    case 'rewrite': return { text: 'This is a mock rewrite of your selected text.' };
+    case 'rewrite':
+    case 'plain_text': return { text: 'This is a mock rewrite of your selected text.' };
+    case 'preview_text': return { options: [
+      { text: 'Three quick updates, and one thing we need from you', reason: 'Adds a hook the subject lacks' },
+      { text: 'Takes two minutes to read, {{first_name|friend}}', reason: 'Personal and low effort' },
+    ] };
+    case 'continue': return { text: 'This is a mock continuation of your email.' };
+    case 'subscriber_filter': return {
+      explanation: 'Mock filter: active subscribers', status: 'active', groups: [], groups_mode: 'any', email_domains: [],
+      conditions: [], added_after: '', added_before: '', emailed: { mode: 'none', campaign: '', days: 0 }, unsupported: '',
+    };
+    case 'map_columns': return { columns: [] };
+    case 'translate': return { ...email, ab_subject_b: '', notes: 'Mock translation: content is unchanged.' };
+    case 'sequence': return {
+      plan: 'Mock series: welcome, then value, then the offer.',
+      notes: 'Mock output.',
+      emails: [0, 3, 7].map((day, i) => ({ ...email, day, purpose: ['Welcome', 'Show value', 'Make the offer'][i], subject: `Mock email ${i + 1}` })),
+    };
+    case 'report': return {
+      headline: 'Mock report: delivery looked healthy.',
+      went_well: ['Few bounces.'], went_badly: ['No open data without Brevo.'], likely_causes: [],
+      next_steps: [{ action: 'Connect Brevo in Settings to see opens and clicks.', why: 'No engagement data available.' }],
+    };
     case 'review':  return {
       score: 78, subject_score: 70, spam_risk: 'low', readability: 'Easy (grade 7)',
       summary: 'Mock review: the email is clear, with one placeholder link to fix.',
@@ -474,6 +737,7 @@ const handler = (fn) => async (_, arg) => {
 
 module.exports = {
   complete, draft, followUp, reply, subjects, rewrite, review,
+  previewText, plainText, translate, sequence, report, subscriberFilter, mapColumns, continueWriting,
   getConfig, saveConfig, listModels, testConnection, handler, AiError,
   FOLLOW_UP_ANGLES: Object.keys(FOLLOW_UP_ANGLES),
 };

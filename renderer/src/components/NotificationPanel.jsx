@@ -8,6 +8,7 @@ const TYPE_META = {
   campaign_done:     { icon: CheckCircle,   color: 'var(--success)',  label: 'Complete'       },
   daily_summary:     { icon: Info,          color: 'var(--accent)',   label: 'Daily Summary'  },
   campaign_reminder: { icon: Clock,         color: 'var(--warning)',  label: 'Reminder'       },
+  ab_winner:         { icon: CheckCircle,   color: 'var(--accent)',   label: 'A/B Winner'     },
 }
 
 function timeAgo(iso) {

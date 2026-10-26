@@ -24,6 +24,12 @@ function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+// AI calls answer { ok:false, error, code } instead of throwing, like the IPC handlers.
+async function aiCall(fn) {
+  try { return await fn(); }
+  catch (err) { return { ok: false, error: err.message, code: err.code }; }
+}
+
 function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
   if (server) return { port: server.address()?.port };
 
@@ -99,6 +105,36 @@ function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
       // POST /campaigns/:id/cancel-schedule
       if (method === 'POST' && parts[0] === 'campaigns' && parts[2] === 'cancel-schedule') {
         return json(res, 200, mailer.cancelSchedule(Number(parts[1])));
+      }
+
+      // POST /ai/draft  { goal, audience?, keyPoints?, cta?, length?, tone?, save?, name?, group_ids? }
+      // Returns the AI draft; with save:true also stores it as a draft campaign.
+      if (method === 'POST' && parts[0] === 'ai' && parts[1] === 'draft') {
+        const body = await readBody(req);
+        const result = await aiCall(() => require('./ai').draft(body));
+        if (!result.ok || !body.save) return json(res, result.ok ? 200 : 400, result);
+        const saved = db.saveCampaign({
+          name: body.name || `AI draft: ${result.subject}`.slice(0, 120),
+          subject: result.subject, preview_text: result.preview_text, html: result.html, text: result.text,
+          from_name: '', from_email: '', reply_to: '', group_ids: body.group_ids || [], attachments: [],
+        });
+        return json(res, 200, { ...result, campaign_id: saved.id });
+      }
+
+      // POST /ai/review  { campaign_id } or { subject, html, text }
+      if (method === 'POST' && parts[0] === 'ai' && parts[1] === 'review') {
+        const body = await readBody(req);
+        const camp = body.campaign_id ? db.getCampaign(Number(body.campaign_id)) : body;
+        if (!camp) return json(res, 404, { error: 'not found' });
+        const result = await aiCall(() => require('./ai').review(camp));
+        return json(res, result.ok ? 200 : 400, result);
+      }
+
+      // POST /ai/report  { campaign_id }
+      if (method === 'POST' && parts[0] === 'ai' && parts[1] === 'report') {
+        const body = await readBody(req);
+        const result = await aiCall(() => require('./ai').report({ campaign_id: Number(body.campaign_id) }));
+        return json(res, result.ok ? 200 : 400, result);
       }
 
       // GET /templates

@@ -164,7 +164,10 @@ export default function AIWriter({ initialMode = 'draft', followUpOf = null, onA
           <div>
             <div className="form-group">
               <label>Subject</label>
-              <div style={{ padding: '8px 10px', background: 'var(--bg3)', borderRadius: 'var(--radius)', fontSize: 13, color: 'var(--text-h)' }}>{result.subject}</div>
+              <div style={{ padding: '8px 10px', background: 'var(--bg3)', borderRadius: 'var(--radius)', fontSize: 13, color: 'var(--text-h)' }}>
+                {result.subject}
+                {result.preview_text && <span style={{ color: 'var(--text-dim)' }}> — {result.preview_text}</span>}
+              </div>
             </div>
             <div className="form-group">
               <label>Body</label>

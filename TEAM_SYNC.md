@@ -42,10 +42,11 @@ locks/<campaignUid>.mwe         encrypted: which device is currently sending a c
 | Groups | Yes | Deterministic uid from the name |
 | Templates | Yes | |
 | Campaigns (content) | Yes | Group references are remapped to each machine's local ids |
-| Campaign state (status, progress, `scheduled_at`, resume) | Yes | Kept as a separate record so live progress updates don't re-upload the HTML |
+| Campaign state (status, progress, `scheduled_at`, resume, A/B winner) | Yes | Kept as a separate record so live progress updates don't re-upload the HTML |
+| AI brand voice (about, tone, words to avoid, sign-off) | Yes | One record from `settings.json`. Only pushed once someone has written one, so a new teammate's empty voice never overwrites the team's. Clearing every field syncs as a delete |
 | Send history | Yes | Append-only. Rows are tagged with `origin_device` |
 | Notifications | No | Per device |
-| Settings, SMTP password, license key, Brevo key | **Never** | |
+| Settings, SMTP password, license key, Brevo key, AI provider/key/models | **Never** | |
 | Attachment files | No | Only the file name and path sync (see "Not done yet") |
 
 ### Change detection

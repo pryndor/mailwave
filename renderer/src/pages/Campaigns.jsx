@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Send, Eye, Trash2, Edit2, StopCircle, Calendar, Clock, Copy, Paperclip, X, BarChart2, FlaskConical, PlayCircle, Wand2, Sparkles, CornerUpRight, ShieldCheck, Undo2 } from 'lucide-react'
+import { Plus, Send, Eye, Trash2, Edit2, StopCircle, Calendar, Clock, Copy, Paperclip, X, BarChart2, FlaskConical, PlayCircle, Wand2, Sparkles, CornerUpRight, ShieldCheck, Undo2, Languages, ListOrdered, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import RichEditor from '../components/RichEditor.jsx'
 import PreSendChecklist from '../components/PreSendChecklist.jsx'
 import CampaignMetrics from '../components/CampaignMetrics.jsx'
 import AIWriter from '../components/AIWriter.jsx'
 import AIReview from '../components/AIReview.jsx'
+import AISequence from '../components/AISequence.jsx'
 import useAiConfig from '../hooks/useAiConfig.js'
 
 export default function Campaigns() {
@@ -14,6 +15,7 @@ export default function Campaigns() {
   const [sending, setSending]     = useState(null)
   const [metrics, setMetrics]     = useState(null)
   const [aiStart, setAiStart]     = useState(null)   // open the AI writer when the editor mounts
+  const [showSequence, setShowSequence] = useState(false)
   const { ready: aiReady } = useAiConfig()
 
   const load = () => window.api.campaigns.list().then(setCampaigns)
@@ -81,8 +83,17 @@ export default function Campaigns() {
           <h2 style={{ fontSize: 18, color: 'var(--text-h)', fontWeight: 700 }}>Campaigns</h2>
           <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 2 }}>Create and send bulk email campaigns</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setEditing('new')}><Plus size={14} /> New Campaign</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" disabled={!aiReady} onClick={() => setShowSequence(true)}
+            title={aiReady ? 'Write a welcome or nurture series as draft campaigns' : 'Turn on AI in Settings first'}>
+            <ListOrdered size={14} /> AI Sequence
+          </button>
+          <button className="btn btn-primary" onClick={() => setEditing('new')}><Plus size={14} /> New Campaign</button>
+        </div>
       </div>
+      {showSequence && (
+        <AISequence onClose={() => setShowSequence(false)} onCreated={() => { setShowSequence(false); load() }} />
+      )}
 
       {campaigns.length === 0 ? (
         <div className="empty-state" style={{ marginTop: 60 }}>
@@ -181,15 +192,44 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
   const [aiUndo, setAiUndo]     = useState(null)        // fields before the last AI apply
   const [showReview, setShowReview] = useState(false)
   const [subjectIdeas, setSubjectIdeas] = useState(null) // null | 'loading' | [{subject, reason}]
+  const [previewIdeas, setPreviewIdeas] = useState(null) // null | 'loading' | [{text, reason}]
+  const [plainBusy, setPlainBusy]       = useState(false)
+  const [showTranslate, setShowTranslate] = useState(false)
+  const [hasBrevo, setHasBrevo] = useState(true)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  // AI output replaces subject/body/plain text, but keeps a snapshot so one
-  // click restores what was there before.
-  const applyAi = (r) => {
-    setAiUndo({ subject: form.subject, html: form.html, text: form.text })
-    setForm(f => ({ ...f, subject: r.subject || f.subject, html: r.html, text: r.text }))
+  // AI output replaces subject/preview/body/plain text, but keeps a snapshot
+  // so one click restores what was there before.
+  const applyAi = (r, _mode, message = 'AI draft added. Review it before sending') => {
+    setAiUndo({ subject: form.subject, ab_subject_b: form.ab_subject_b, preview_text: form.preview_text, html: form.html, text: form.text })
+    setForm(f => ({
+      ...f,
+      subject: r.subject || f.subject,
+      preview_text: r.preview_text || f.preview_text,
+      ...(r.ab_subject_b !== undefined && f.ab_subject_b ? { ab_subject_b: r.ab_subject_b || f.ab_subject_b } : {}),
+      html: r.html,
+      text: r.text,
+    }))
     setAiWriter(null)
-    toast.success('AI draft added. Review it before sending')
+    toast.success(message)
+  }
+
+  const suggestPreview = async () => {
+    setPreviewIdeas('loading')
+    const r = await window.api.ai.previewText({ subject: form.subject, html: form.html, preview_text: form.preview_text })
+    if (!r.ok) { setPreviewIdeas(null); toast.error(r.error); return }
+    setPreviewIdeas(r.options)
+  }
+
+  // Replaces the plain-text fallback; the previous text stays undoable.
+  const generatePlainText = async () => {
+    setPlainBusy(true)
+    const r = await window.api.ai.plainText({ html: form.html })
+    setPlainBusy(false)
+    if (!r.ok) { toast.error(r.error); return }
+    setAiUndo({ subject: form.subject, ab_subject_b: form.ab_subject_b, preview_text: form.preview_text, html: form.html, text: form.text })
+    set('text', r.text)
+    toast.success('Plain-text version written')
   }
   const undoAi = () => {
     setForm(f => ({ ...f, ...aiUndo }))
@@ -230,6 +270,7 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
     window.api.groups.list().then(setGroups)
     window.api.templates.list().then(setTemplates)
     window.api.subscribers.customFields().then(setCustomTags)
+    window.api.brevo.hasKey().then(setHasBrevo)
   }, [])
 
   const toggleGroup = (id) => {
@@ -267,6 +308,10 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
             title={aiReady ? 'Draft, follow up or reply with AI' : 'Turn on AI in Settings first'}>
             <Sparkles size={14} /> Write with AI
           </button>
+          <button className="btn btn-ghost" disabled={!aiReady} onClick={() => setShowTranslate(true)}
+            title={aiReady ? 'Translate subject, preview text and body' : 'Turn on AI in Settings first'}>
+            <Languages size={14} /> Translate
+          </button>
           <button className="btn btn-ghost" disabled={!aiReady} onClick={() => setShowReview(true)}
             title={aiReady ? 'Check this email with AI before sending' : 'Turn on AI in Settings first'}>
             <ShieldCheck size={14} /> AI Review
@@ -279,6 +324,10 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
       {aiWriter && (
         <AIWriter initialMode={aiWriter.mode} followUpOf={aiWriter.followUpOf}
           onApply={applyAi} onClose={() => setAiWriter(null)} />
+      )}
+      {showTranslate && (
+        <TranslateModal form={form} onClose={() => setShowTranslate(false)}
+          onApply={(r) => { applyAi(r, 'translate', 'Campaign translated. Check it before sending'); setShowTranslate(false) }} />
       )}
       {showReview && (
         <div className="modal-overlay">
@@ -323,7 +372,7 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
         <div>
           {aiUndo && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', marginBottom: 14, background: 'var(--accent-bg)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--accent)' }}>
-              <Sparkles size={13} /> <span style={{ flex: 1 }}>Subject and body were written by AI. Check facts, links and [placeholders] before sending.</span>
+              <Sparkles size={13} /> <span style={{ flex: 1 }}>Parts of this email were written by AI. Check facts, links and [placeholders] before sending.</span>
               <button className="btn btn-ghost btn-sm" onClick={undoAi}><Undo2 size={12} /> Undo AI</button>
               <button onClick={() => setAiUndo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)' }}><X size={13} /></button>
             </div>
@@ -370,8 +419,31 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
               <span>Preview Text <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>— the line inboxes show after the subject</span></span>
               <span style={{ fontSize: 11, color: (form.preview_text || '').length > 110 ? 'var(--warning)' : 'var(--text-dim)', fontWeight: 400 }}>{(form.preview_text || '').length}/110</span>
             </label>
-            <input className="input" value={form.preview_text || ''} onChange={e => set('preview_text', e.target.value)}
-              placeholder="e.g.  Three things we shipped this month, and one we didn't" />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="input" value={form.preview_text || ''} onChange={e => set('preview_text', e.target.value)}
+                placeholder="e.g.  Three things we shipped this month, and one we didn't" />
+              {aiReady && (
+                <button className="btn btn-ghost" style={{ whiteSpace: 'nowrap' }} disabled={previewIdeas === 'loading'} onClick={suggestPreview}
+                  title="Suggest preview text that adds to the subject">
+                  <Sparkles size={14} className={previewIdeas === 'loading' ? 'spin' : ''} /> {previewIdeas === 'loading' ? 'Thinking…' : 'Suggest'}
+                </button>
+              )}
+            </div>
+            {Array.isArray(previewIdeas) && (
+              <div style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: 'var(--bg3)', fontSize: 11, color: 'var(--text-dim)' }}>
+                  <span>Click to use as the preview text</span>
+                  <button onClick={() => setPreviewIdeas(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}><X size={12} /></button>
+                </div>
+                {previewIdeas.map((o, i) => (
+                  <div key={i} onClick={() => { set('preview_text', o.text); setPreviewIdeas(null) }}
+                    style={{ padding: '7px 10px', borderTop: '1px solid var(--border)', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-h)' }}>{o.text}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{o.reason}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
               Merge tags take a fallback for subscribers without that field: <code style={{ color: 'var(--accent)' }}>{'{{first_name|there}}'}</code>
             </div>
@@ -408,12 +480,56 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
               <input className="input" value={form.ab_subject_b || ''} onChange={e => set('ab_subject_b', e.target.value)} placeholder="Alternative subject line (optional)" />
             </div>
             {form.ab_subject_b?.trim() && (
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Send Subject A to first <strong>{form.ab_split_pct || 50}%</strong>, Subject B to remaining {100 - (form.ab_split_pct || 50)}%</label>
-                <input type="range" min={10} max={90} step={5} value={form.ab_split_pct || 50}
-                  onChange={e => set('ab_split_pct', Number(e.target.value))}
-                  style={{ width: '100%', accentColor: 'var(--accent)' }} />
-              </div>
+              <>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  {[['split', 'Fixed split'], ['winner', 'Test, then send the winner']].map(([id, label]) => (
+                    <button key={id} type="button" onClick={() => set('ab_mode', id)}
+                      style={{
+                        padding: '5px 12px', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 12,
+                        border: `1px solid ${(form.ab_mode || 'split') === id ? 'var(--accent)' : 'var(--border)'}`,
+                        background: (form.ab_mode || 'split') === id ? 'var(--accent-bg)' : 'var(--bg2)',
+                        color: (form.ab_mode || 'split') === id ? 'var(--accent)' : 'var(--text)',
+                      }}>{label}</button>
+                  ))}
+                </div>
+                {(form.ab_mode || 'split') === 'split' ? (
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Send Subject A to first <strong>{form.ab_split_pct || 50}%</strong>, Subject B to remaining {100 - (form.ab_split_pct || 50)}%</label>
+                    <input type="range" min={10} max={90} step={5} value={form.ab_split_pct || 50}
+                      onChange={e => set('ab_split_pct', Number(e.target.value))}
+                      style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                  </div>
+                ) : (
+                  <>
+                    <div className="form-row">
+                      <div className="form-group" style={{ marginBottom: 8 }}>
+                        <label>Test on <strong>{form.ab_test_pct || 20}%</strong> of the list</label>
+                        <input type="range" min={5} max={50} step={5} value={form.ab_test_pct || 20}
+                          onChange={e => set('ab_test_pct', Number(e.target.value))}
+                          style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 8 }}>
+                        <label>Wait before picking</label>
+                        <select className="select" value={form.ab_wait_hours || 4} onChange={e => set('ab_wait_hours', Number(e.target.value))}>
+                          {[1, 2, 4, 8, 12, 24].map(h => <option key={h} value={h}>{h} hour{h > 1 ? 's' : ''}</option>)}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 8 }}>
+                        <label>Winner by</label>
+                        <select className="select" value={form.ab_metric || 'opens'} onChange={e => set('ab_metric', e.target.value)}>
+                          <option value="opens">Open rate</option>
+                          <option value="clicks">Click rate</option>
+                        </select>
+                      </div>
+                    </div>
+                    <p style={{ fontSize: 11, color: 'var(--text-dim)', margin: 0 }}>
+                      Half the test group gets A, half gets B. After the wait, the subject with the better {form.ab_metric === 'clicks' ? 'click' : 'open'} rate
+                      goes to the other {100 - (form.ab_test_pct || 20)}% automatically (MailWave must be running).
+                      {!hasBrevo && <span style={{ color: 'var(--warning)' }}> Needs Brevo stats: add a Brevo API key in Settings and send through Brevo SMTP, or subject A is kept.</span>}
+                    </p>
+                  </>
+                )}
+              </>
             )}
           </div>
 
@@ -422,7 +538,15 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
             <RichEditor value={form.html} onChange={v => set('html', v)} customTags={customTags} aiReady={aiReady} />
           </div>
           <div className="form-group">
-            <label>Plain Text (fallback)</label>
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>Plain Text (fallback) <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>— leave empty to generate it from the HTML at send time</span></span>
+              {aiReady && (
+                <button className="btn btn-ghost btn-sm" disabled={plainBusy || !form.html} onClick={generatePlainText}
+                  title="Write a clean plain-text version with headings, lists and links written out">
+                  <Sparkles size={12} className={plainBusy ? 'spin' : ''} /> {plainBusy ? 'Writing…' : 'Write with AI'}
+                </button>
+              )}
+            </label>
             <textarea className="textarea" rows={4} value={form.text} onChange={e => set('text', e.target.value)} placeholder="Plain text version..." />
           </div>
 
@@ -465,6 +589,95 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
               </>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Translate (AI) ────────────────────────────────────────────────────────────
+const LANGUAGES = ['English', 'Hindi', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'Marathi', 'Bengali', 'Gujarati',
+  'Spanish', 'French', 'German', 'Portuguese', 'Italian', 'Dutch', 'Arabic', 'Chinese (Simplified)', 'Japanese', 'Indonesian']
+
+function TranslateModal({ form, onApply, onClose }) {
+  const [language, setLanguage] = useState('Hindi')
+  const [other, setOther]       = useState('')
+  const [busy, setBusy]         = useState(false)
+  const [result, setResult]     = useState(null)
+
+  const run = async () => {
+    const lang = language === 'other' ? other.trim() : language
+    if (!lang) { toast.error('Type the language'); return }
+    setBusy(true)
+    const r = await window.api.ai.translate({
+      language: lang, subject: form.subject, ab_subject_b: form.ab_subject_b, preview_text: form.preview_text, html: form.html, text: form.text,
+    })
+    setBusy(false)
+    if (!r.ok) { toast.error(r.error); return }
+    setResult(r)
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal modal-lg" style={{ maxWidth: 720, maxHeight: '90vh', overflow: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}><Languages size={16} color="var(--accent)" /> Translate campaign</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}><X size={18} /></button>
+        </div>
+        {!result ? (
+          <>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Translate into</label>
+                <select className="select" value={language} onChange={e => setLanguage(e.target.value)}>
+                  {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+                  <option value="other">Other…</option>
+                </select>
+              </div>
+              {language === 'other' && (
+                <div className="form-group">
+                  <label>Language</label>
+                  <input className="input" value={other} onChange={e => setOther(e.target.value)} placeholder="e.g. Swahili" />
+                </div>
+              )}
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+              Translates the subject, subject B, preview text, body and plain text. Links, formatting and merge tags stay as they are.
+              Tip: duplicate the campaign first if you want to keep this version too.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="form-group">
+              <label>Subject</label>
+              <div style={{ padding: '8px 10px', background: 'var(--bg3)', borderRadius: 'var(--radius)', fontSize: 13 }}>
+                {result.subject}{result.preview_text && <span style={{ color: 'var(--text-dim)' }}> — {result.preview_text}</span>}
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Body</label>
+              <div className="tiptap" style={{ padding: '10px 12px', background: 'var(--bg3)', borderRadius: 'var(--radius)', maxHeight: 340, overflow: 'auto', fontSize: 13 }}
+                dangerouslySetInnerHTML={{ __html: result.html }} />
+            </div>
+            {[...(result.warnings || []), ...(result.notes ? [`Note from AI: ${result.notes}`] : [])].map((w, i) => (
+              <div key={i} style={{ fontSize: 12, color: 'var(--warning)', padding: '5px 8px', marginBottom: 4, background: 'rgba(245,158,11,0.06)', borderRadius: 4 }}>{w}</div>
+            ))}
+          </>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+          {!result ? (
+            <>
+              <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+              <button className="btn btn-primary" disabled={busy} onClick={run}>
+                {busy ? <><RefreshCw size={14} className="spin" /> Translating…</> : <><Languages size={14} /> Translate</>}
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-ghost" onClick={() => setResult(null)}>← Back</button>
+              <button className="btn btn-primary" onClick={() => onApply(result)}>Use translation</button>
+            </>
+          )}
         </div>
       </div>
     </div>

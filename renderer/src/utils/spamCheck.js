@@ -93,6 +93,49 @@ export function checkSpam(subject, html, text) {
     score += bodySpam.length * 4
   }
 
+  // ── Deliverability & accessibility hints ────────────────────────────────
+  const links = [...(html || '').matchAll(/<a\s[^>]*href\s*=\s*["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)]
+    .map(m => ({ href: m[1].trim(), text: stripHtml(m[2]).toLowerCase() }))
+
+  if (links.length > 15) {
+    warnings.push({ label: `${links.length} links — many links look promotional to spam filters; keep it under 15`, severity: 'warn' })
+    score += 5
+  }
+
+  const placeholders = links.filter(l =>
+    !l.href || l.href === '#' || /^\[.*\]$/.test(l.href) || /(^|\/\/)(www\.)?example\.(com|org|net)/i.test(l.href) || /todo|xxx|your-?link/i.test(l.href))
+  if (placeholders.length) {
+    issues.push({ label: `Placeholder link${placeholders.length > 1 ? 's' : ''}: ${placeholders.slice(0, 3).map(l => l.href || '(empty)').join(', ')} — add the real URL`, severity: 'error' })
+    score += 10
+  }
+
+  const insecure = links.filter(l => /^http:\/\//i.test(l.href))
+  if (insecure.length) {
+    warnings.push({ label: `${insecure.length} link${insecure.length > 1 ? 's use' : ' uses'} http:// — use https:// so mail clients don't flag them`, severity: 'warn' })
+    score += 3
+  }
+
+  const vague = links.filter(l => /^(click here|here|this|link|read more|more)$/.test(l.text.trim()))
+  if (vague.length) {
+    warnings.push({ label: `Vague link text ("${vague[0].text.trim()}") — say where the link goes, for screen readers and trust`, severity: 'warn' })
+  }
+
+  const imgs = (html || '').match(/<img\b[^>]*>/gi) || []
+  const noAlt = imgs.filter(tag => !/\balt\s*=\s*["'][^"']+["']/i.test(tag))
+  if (noAlt.length) {
+    warnings.push({ label: `${noAlt.length} image${noAlt.length > 1 ? 's' : ''} without alt text — shown when images are blocked and read by screen readers`, severity: 'warn' })
+  }
+  if (imgCount > 0 && wordCount >= 20 && wordCount / imgCount < 50) {
+    warnings.push({ label: `Low text-to-image ratio (${wordCount} words, ${imgCount} images) — aim for at least ~50 words per image`, severity: 'warn' })
+    score += 5
+  }
+
+  const capsWords = stripHtml(html || '').match(/\b[A-Z]{4,}\b/g) || []
+  if (capsWords.length > 5) {
+    warnings.push({ label: `${capsWords.length} ALL CAPS words in the body — reads as shouting and trips spam filters`, severity: 'warn' })
+    score += 5
+  }
+
   // ── Positive signals ──────────────────────────────────────────────────────
   if (wordCount > 100) score = Math.max(0, score - 5)  // decent content length
 
@@ -102,6 +145,7 @@ export function checkSpam(subject, html, text) {
     warnings,
     wordCount,
     imgCount,
+    linkCount: links.length,
   }
 }
 

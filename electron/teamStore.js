@@ -7,9 +7,14 @@
 // smart schedule — are all picked up without modification.
 const crypto = require('crypto');
 const { handle: db } = require('./db');
+const settings = require('./settings');
 
 // Apply order inside one batch: referenced entities first.
-const ENTITIES = ['group', 'template', 'subscriber', 'campaign', 'cstate'];
+const ENTITIES = ['group', 'template', 'subscriber', 'campaign', 'cstate', 'brand'];
+
+// The AI brand voice (settings.json, not SQLite): one record, uid 'brand'.
+// Only the voice is shared — never the AI provider, key or models.
+const BRAND_FIELDS = ['ai_brand_about', 'ai_brand_tone', 'ai_brand_avoid', 'ai_brand_signoff'];
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const hashRecord = (rec) => sha(JSON.stringify(rec)).slice(0, 40);
@@ -55,6 +60,15 @@ function exportEntity(entity, onlyUid = null) {
     for (const r of db.prepare(`SELECT uid, name FROM groups${where}`).all(...args)) out.set(r.uid, { name: r.name });
   }
 
+  // Exported only once someone wrote a voice: a new teammate's empty one
+  // must not overwrite the team's. Clearing every field syncs as a delete.
+  if (entity === 'brand' && (!onlyUid || onlyUid === 'brand')) {
+    const cfg = settings.getAll();
+    const rec = Object.fromEntries(BRAND_FIELDS.map(k => [k, String(cfg[k] || '')]));
+    const isDefault = !rec.ai_brand_about && !rec.ai_brand_avoid && !rec.ai_brand_signoff && (!rec.ai_brand_tone || rec.ai_brand_tone === 'friendly');
+    if (!isDefault) out.set('brand', rec);
+  }
+
   if (entity === 'template') {
     for (const r of db.prepare(`SELECT uid, name, subject, html, text FROM templates${where}`).all(...args)) {
       out.set(r.uid, { name: r.name, subject: r.subject, html: r.html, text: r.text });
@@ -96,12 +110,14 @@ function exportEntity(entity, onlyUid = null) {
             ab_subject_b: r.ab_subject_b || '', ab_split_pct: r.ab_split_pct || 50,
             // Only when set, so campaigns without one keep their synced hash.
             ...(r.preview_text ? { preview_text: r.preview_text } : {}),
+            ...(r.ab_mode === 'winner' ? { ab_mode: 'winner', ab_test_pct: r.ab_test_pct, ab_wait_hours: r.ab_wait_hours, ab_metric: r.ab_metric } : {}),
             created_at: r.created_at,
           }
         : {
             status: r.status, sent_count: r.sent_count, total_count: r.total_count,
             sent_at: r.sent_at || null, scheduled_at: r.scheduled_at || null,
             resume_offset: r.resume_offset || 0, resume_at: r.resume_at || null,
+            ...(r.ab_winner ? { ab_winner: r.ab_winner } : {}),
           });
     }
   }
@@ -216,27 +232,37 @@ const applyPut = {
       attachments: JSON.stringify(d.attachments || []),
       ab_subject_b: d.ab_subject_b || '', ab_split_pct: d.ab_split_pct || 50,
       preview_text: d.preview_text || '',
+      ab_mode: d.ab_mode === 'winner' ? 'winner' : 'split', ab_test_pct: d.ab_test_pct || 20,
+      ab_wait_hours: d.ab_wait_hours || 4, ab_metric: d.ab_metric === 'clicks' ? 'clicks' : 'opens',
       created_at: d.created_at || null, uid,
     };
     const id = localIdByUid('campaigns', uid);
     if (id) {
       db.prepare(`UPDATE campaigns SET name=@name, subject=@subject, from_name=@from_name, from_email=@from_email,
         reply_to=@reply_to, html=@html, text=@text, group_ids=@group_ids, attachments=@attachments,
-        ab_subject_b=@ab_subject_b, ab_split_pct=@ab_split_pct, preview_text=@preview_text, updated_at=datetime('now') WHERE uid=@uid`).run(vals);
+        ab_subject_b=@ab_subject_b, ab_split_pct=@ab_split_pct, preview_text=@preview_text,
+        ab_mode=@ab_mode, ab_test_pct=@ab_test_pct, ab_wait_hours=@ab_wait_hours, ab_metric=@ab_metric,
+        updated_at=datetime('now') WHERE uid=@uid`).run(vals);
     } else {
       db.prepare(`INSERT INTO campaigns (name, subject, from_name, from_email, reply_to, html, text, group_ids,
-        attachments, ab_subject_b, ab_split_pct, preview_text, created_at, uid)
+        attachments, ab_subject_b, ab_split_pct, preview_text, ab_mode, ab_test_pct, ab_wait_hours, ab_metric, created_at, uid)
         VALUES (@name, @subject, @from_name, @from_email, @reply_to, @html, @text, @group_ids,
-        @attachments, @ab_subject_b, @ab_split_pct, @preview_text, COALESCE(@created_at, datetime('now')), @uid)`).run(vals);
+        @attachments, @ab_subject_b, @ab_split_pct, @preview_text, @ab_mode, @ab_test_pct, @ab_wait_hours, @ab_metric,
+        COALESCE(@created_at, datetime('now')), @uid)`).run(vals);
     }
+  },
+
+  brand(uid, d) {
+    settings.save(Object.fromEntries(BRAND_FIELDS.map(k => [k, String(d[k] || '')])));
   },
 
   cstate(uid, d) {
     // Returns false when the campaign itself hasn't arrived yet, so the state isn't marked synced.
     if (!localIdByUid('campaigns', uid)) return false;
     db.prepare(`UPDATE campaigns SET status=@status, sent_count=@sent_count, total_count=@total_count,
-      sent_at=@sent_at, scheduled_at=@scheduled_at, resume_offset=@resume_offset, resume_at=@resume_at
-      WHERE uid=@uid`).run({ ...d, uid });
+      sent_at=@sent_at, scheduled_at=@scheduled_at, resume_offset=@resume_offset, resume_at=@resume_at,
+      ab_winner=@ab_winner
+      WHERE uid=@uid`).run({ ...d, ab_winner: d.ab_winner || '', uid });
   },
 };
 
@@ -269,7 +295,8 @@ function applyRemoteEvents(events) {
       if (st && (st.ts > ev.ts || (st.ts === ev.ts && st.dev >= ev.dev))) { counts.skipped++; continue; }
 
       if (ev.op === 'del') {
-        if (ev.e !== 'cstate') db.prepare(`DELETE FROM ${TABLE[ev.e]} WHERE uid=?`).run(ev.uid);
+        if (ev.e === 'brand') settings.save({ ai_brand_about: '', ai_brand_tone: 'friendly', ai_brand_avoid: '', ai_brand_signoff: '' });
+        else if (ev.e !== 'cstate') db.prepare(`DELETE FROM ${TABLE[ev.e]} WHERE uid=?`).run(ev.uid);
         setState.run(ev.e, ev.uid, 'deleted', ev.ts, ev.dev);
       } else {
         if (applyPut[ev.e](ev.uid, ev.data) === false) continue;
