@@ -13,16 +13,6 @@ dist-app/
 # electron/license.js) ships with the app.
 license-tooling/private_key.pem
 
-# Payment webhook — Vercel deploy artifacts and local secrets
-payment-webhook/node_modules/
-payment-webhook/.env
-payment-webhook/.vercel/
-
-# Team backend — same
-team-backend/node_modules/
-team-backend/.env
-team-backend/.vercel/
-
-# cPanel Python webhook
-payment-webhook-cpanel/__pycache__/
-payment-webhook-cpanel/.env
+# Payment webhook (Hetzner VPS) — local secrets
+payment-webhook-vps/node_modules/
+payment-webhook-vps/.env

@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import TeamSyncSettings from '../components/TeamSyncSettings.jsx'
 import WorkspaceSettings from '../components/WorkspaceSettings.jsx'
 import AISettings from '../components/AISettings.jsx'
+import AutomationSettings from '../components/AutomationSettings.jsx'
 
 // Known providers — just fills in the fields, user can always edit manually
 const PROVIDERS = [
@@ -226,6 +227,11 @@ export default function Settings() {
       <div className="divider" />
 
       <AISettings />
+
+      <div className="divider" />
+
+      {/* Remounts when the license changes, so it shows as unlocked right away */}
+      <AutomationSettings key={license?.plan || 'free'} />
 
       <div className="divider" />
 

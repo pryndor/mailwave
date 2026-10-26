@@ -335,6 +335,6 @@ function campaignUid(campaign_id) {
 }
 
 module.exports = {
-  ensureUids, collectLocalChanges, applyRemoteEvents,
+  collectLocalChanges, applyRemoteEvents,
   getMeta, setMeta, resetSyncState, campaignUid,
 };

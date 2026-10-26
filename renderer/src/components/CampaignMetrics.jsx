@@ -1,6 +1,50 @@
 import { useEffect, useState } from 'react'
 import { X, RefreshCw, Mail, MousePointer, TrendingUp, AlertCircle, UserMinus, ShieldAlert } from 'lucide-react'
 
+// Defined outside the component so React keeps them between renders.
+const MetricCard = ({ label, value, sub, icon: Icon, color }) => (
+  <div style={{ background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '14px 16px', border: '1px solid var(--border)' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+      <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{label}</span>
+      <Icon size={13} color={color || 'var(--text-dim)'} />
+    </div>
+    <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-h)' }}>{value}</div>
+    {sub && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>{sub}</div>}
+  </div>
+)
+
+const VariantBlock = ({ label, subject, data, highlight }) => (
+  <div style={{
+    flex: 1, border: `2px solid ${highlight ? 'var(--success)' : 'var(--border)'}`,
+    borderRadius: 'var(--radius-lg)', padding: 16, position: 'relative',
+  }}>
+    {highlight && (
+      <div style={{ position: 'absolute', top: -10, left: 12, background: 'var(--success)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10 }}>
+        WINNER
+      </div>
+    )}
+    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-h)', marginBottom: 4 }}>{label}</div>
+    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 14, fontStyle: 'italic' }}>"{subject}"</div>
+    {data ? (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        {[
+          { l: 'Delivered', v: data.delivered },
+          { l: 'Opens', v: `${data.opens} (${data.open_rate}%)` },
+          { l: 'Clicks', v: `${data.clicks} (${data.click_rate}%)` },
+          { l: 'Bounces', v: data.bounces },
+        ].map(({ l, v }) => (
+          <div key={l} style={{ background: 'var(--bg3)', padding: '8px 10px', borderRadius: 'var(--radius)' }}>
+            <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>{l}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-h)' }}>{v}</div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>No data yet</p>
+    )}
+  </div>
+)
+
 export default function CampaignMetrics({ campaign, onClose }) {
   const [metrics, setMetrics] = useState(null)
   const [abA, setAbA]         = useState(null)
@@ -29,49 +73,6 @@ export default function CampaignMetrics({ campaign, onClose }) {
   }
 
   useEffect(() => { load() }, [])
-
-  const MetricCard = ({ label, value, sub, icon: Icon, color }) => (
-    <div style={{ background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '14px 16px', border: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{label}</span>
-        <Icon size={13} color={color || 'var(--text-dim)'} />
-      </div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-h)' }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>{sub}</div>}
-    </div>
-  )
-
-  const VariantBlock = ({ label, subject, data, highlight }) => (
-    <div style={{
-      flex: 1, border: `2px solid ${highlight ? 'var(--success)' : 'var(--border)'}`,
-      borderRadius: 'var(--radius-lg)', padding: 16, position: 'relative',
-    }}>
-      {highlight && (
-        <div style={{ position: 'absolute', top: -10, left: 12, background: 'var(--success)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10 }}>
-          WINNER
-        </div>
-      )}
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-h)', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 14, fontStyle: 'italic' }}>"{subject}"</div>
-      {data ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          {[
-            { l: 'Delivered', v: data.delivered },
-            { l: 'Opens', v: `${data.opens} (${data.open_rate}%)` },
-            { l: 'Clicks', v: `${data.clicks} (${data.click_rate}%)` },
-            { l: 'Bounces', v: data.bounces },
-          ].map(({ l, v }) => (
-            <div key={l} style={{ background: 'var(--bg3)', padding: '8px 10px', borderRadius: 'var(--radius)' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>{l}</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-h)' }}>{v}</div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>No data yet</p>
-      )}
-    </div>
-  )
 
   const winner = abA && abB
     ? (abA.open_rate >= abB.open_rate ? 'a' : 'b')

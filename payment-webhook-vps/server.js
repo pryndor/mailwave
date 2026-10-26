@@ -1,8 +1,9 @@
-// Standalone Node.js service — same logic as payment-webhook/api/razorpay-webhook.js
-// (the Vercel version), just running as a plain long-lived process instead of a
-// serverless function, meant to sit behind Apache as a reverse proxy on the
-// existing Hetzner VPS (same box as ncloud.drugvigil.com) on a subdomain like
-// webhook.drugvigil.com. See README.md for the Apache vhost + systemd setup.
+// Standalone Node.js service: Razorpay calls it on each successful
+// subscription charge; it verifies the request, signs a MailWave Pro license
+// token and emails it to the buyer. Runs as a long-lived process behind Apache
+// as a reverse proxy on the Hetzner VPS (same box as ncloud.drugvigil.com),
+// on a subdomain like webhook.drugvigil.com. See README.md for the Apache
+// vhost + systemd setup.
 //
 // Required environment variables (set via the systemd unit's EnvironmentFile,
 // never committed):
@@ -18,11 +19,9 @@ const crypto     = require('crypto');
 const fs         = require('fs');
 const nodemailer = require('nodemailer');
 
-// Reading the key from a file (LICENSE_PRIVATE_KEY_PATH) is preferred here --
-// unlike serverless env vars, a VPS has real filesystem access, and systemd's
-// EnvironmentFile doesn't cleanly support multi-line values, which a PEM is.
-// LICENSE_PRIVATE_KEY_PEM (inline) still works as a fallback for parity with
-// the Vercel/cPanel versions.
+// Reading the key from a file (LICENSE_PRIVATE_KEY_PATH) is preferred:
+// systemd's EnvironmentFile doesn't cleanly support multi-line values, which a
+// PEM is. LICENSE_PRIVATE_KEY_PEM (inline) still works as a fallback.
 function loadPrivateKey() {
   if (process.env.LICENSE_PRIVATE_KEY_PATH) {
     return crypto.createPrivateKey(fs.readFileSync(process.env.LICENSE_PRIVATE_KEY_PATH, 'utf8'));

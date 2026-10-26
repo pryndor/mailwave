@@ -736,8 +736,7 @@ const handler = (fn) => async (_, arg) => {
 };
 
 module.exports = {
-  complete, draft, followUp, reply, subjects, rewrite, review,
+  draft, followUp, reply, subjects, rewrite, review,
   previewText, plainText, translate, sequence, report, subscriberFilter, mapColumns, continueWriting,
-  getConfig, saveConfig, listModels, testConnection, handler, AiError,
-  FOLLOW_UP_ANGLES: Object.keys(FOLLOW_UP_ANGLES),
+  getConfig, saveConfig, listModels, testConnection, handler, AiError
 };

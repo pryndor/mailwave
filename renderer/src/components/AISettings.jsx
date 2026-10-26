@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Sparkles, Wifi, Check, Lock, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { TONE_OPTIONS } from '../utils/tones.js'
 
 const h3Style = { fontSize: 14, color: 'var(--text-h)', marginBottom: 4, paddingBottom: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }
 const dim = { fontSize: 12, color: 'var(--text-dim)' }
@@ -200,10 +201,7 @@ export default function AISettings() {
             <div className="form-group">
               <label>Default tone</label>
               <select className="select" value={cfg.brand_tone} onChange={e => set('brand_tone', e.target.value)}>
-                <option value="friendly">Friendly</option>
-                <option value="formal">Formal</option>
-                <option value="clinical">Clinical / scientific</option>
-                <option value="playful">Playful</option>
+                {TONE_OPTIONS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
             </div>
             <div className="form-group">

@@ -220,7 +220,7 @@ function previewSmartSchedule({ campaign_id, local_time, use_email_domain = true
 // that timezone's subscribers at local_time (HH:MM) there. The original stays
 // as it was. Subscribers with no timezone, country or country email ending go
 // out at local_time in the sender's own timezone.
-function smartScheduleByTimezone({ campaign_id, local_time, use_email_domain = true }, mainWindow, getPort) {
+function smartScheduleByTimezone({ campaign_id, local_time, use_email_domain = true }, mainWindow) {
   if (!license.isPro(settings.getAll().license_key)) {
     return { ok: false, error: 'Smart Schedule is a Pro feature.', proRequired: true };
   }
@@ -241,11 +241,11 @@ function smartScheduleByTimezone({ campaign_id, local_time, use_email_domain = t
     const dup = db.duplicateCampaign(campaign_id);
     db.saveCampaign({ ...campaign, id: dup.id, name: `${campaign.name} — ${b.timezone}`, group_ids: [group.id] });
 
-    const sched = mailer.scheduleCampaign({ campaign_id: dup.id, send_at: b.send_at }, mainWindow, getPort);
+    const sched = mailer.scheduleCampaign({ campaign_id: dup.id, send_at: b.send_at }, mainWindow);
     results.push({ timezone: b.timezone, count: b.count, sources: b.sources, send_at: b.send_at, campaign_id: dup.id, ok: sched.ok, error: sched.error });
   }
 
   return { ok: true, buckets: results, unmapped: plan.totals.fallback, totals: plan.totals };
 }
 
-module.exports = { smartScheduleByTimezone, previewSmartSchedule, planSmartSchedule, resolveTimezone, nextLocalTimeUtc, countryToTimezone };
+module.exports = { smartScheduleByTimezone, previewSmartSchedule, resolveTimezone, countryToTimezone };

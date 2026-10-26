@@ -40,4 +40,4 @@ function teamAllowed() {
   return license.isPro(settings.getAll().license_key) || status().active;
 }
 
-module.exports = { status, start, teamAllowed, TRIAL_DAYS };
+module.exports = { status, start, teamAllowed };

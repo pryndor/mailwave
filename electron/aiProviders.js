@@ -186,4 +186,4 @@ async function chatCompat({ provider, key, baseUrl, model, system, user, schema,
   throw new AiError('This model could not produce the required format. Try a different model.', 'format');
 }
 
-module.exports = { AiError, PROVIDERS, detectProvider, compatModels, pickModel, chatCompat, httpError };
+module.exports = { AiError, PROVIDERS, detectProvider, compatModels, pickModel, chatCompat };

@@ -197,4 +197,4 @@ function extractTarGz(gz) {
   return files;
 }
 
-module.exports = { client, startDeviceFlow, pollDeviceFlow, GitHubError, hasDeviceFlow: () => !!GITHUB_CLIENT_ID };
+module.exports = { client, startDeviceFlow, pollDeviceFlow, hasDeviceFlow: () => !!GITHUB_CLIENT_ID };

@@ -8,15 +8,7 @@ Each MailWave install keeps all its data in its own local SQLite file (`mailwave
 
 Team Sync gives a team one shared dataset **without running any server**. It uses a private GitHub repo as the shared storage, and every device encrypts its data before uploading it.
 
-This is the serverless alternative to `team-backend/` (Vercel + Neon Postgres), which already exists in this repo. The two approaches compare like this:
-
-| | Team Sync (GitHub) | `team-backend/` (hosted) |
-|---|---|---|
-| Server / monthly cost | None | Vercel + Neon bills |
-| Privacy | End-to-end encrypted. GitHub only sees ciphertext | Data is readable on our server |
-| Sends while every laptop is off | No: at least one team member's app must be running | Yes: the cron sender does it |
-| UI | Built into the desktop app | API only, no UI yet |
-| Good for | Small teams, roughly 2–15 people | Larger teams, or sends that must happen with no laptop on |
+Trade-offs to know: there is no server or monthly cost, and GitHub only ever sees encrypted data. In return, scheduled sends only go out while at least one team member's app is running, and it suits small teams (roughly 2–15 people).
 
 ## How it works
 
@@ -192,6 +184,6 @@ The test script isn't committed. It lives in the session scratchpad and can be a
 ## Possible next steps
 
 - **Pluggable backends.** `teamSync` only needs "list files, read a file, create a file, compare-and-swap a file". The same engine could run on GitLab, Gitea/Forgejo (self-hosted), S3/R2 (conditional PUT) or WebDAV/Nextcloud with little change. Gitea is interesting for organisations that want everything on their own hardware.
-- **Hybrid with `team-backend/`.** A cheap cron (such as the existing GitHub Actions workflow) could act as an "always-on member" that sends scheduled campaigns when every laptop is off. It would need the team key, which moves trust to that runner.
+- **An always-on member.** A cheap scheduled runner (such as a GitHub Actions workflow) could act as a team member that sends scheduled campaigns when every laptop is off. It would need the team key, which moves trust to that runner.
 - **Activity feed.** Events already carry device and time, so a "Bob edited campaign X, 5 min ago" view is cheap to build.
 - **Shared team defaults.** Sync non-secret settings such as the from name, batch size and daily limit as a `team_settings` record.

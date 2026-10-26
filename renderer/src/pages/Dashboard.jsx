@@ -10,13 +10,6 @@ export default function Dashboard({ onNavigate }) {
   const [dailyStats, setDailyStats]     = useState(null)
   const [loadingDaily, setLoadingDaily] = useState(false)
 
-  useEffect(() => {
-    window.api.subscribers.stats().then(setStats)
-    window.api.campaigns.list().then(c => setCampaigns(c.slice(0, 6)))
-    loadBrevo()
-    loadDaily()
-  }, [])
-
   const loadBrevo = async () => {
     setLoadingBrevo(true)
     const [s, t] = await Promise.all([window.api.brevo.stats(), window.api.brevo.today()])
@@ -31,6 +24,13 @@ export default function Dashboard({ onNavigate }) {
     setDailyStats(d)
     setLoadingDaily(false)
   }
+
+  useEffect(() => {
+    window.api.subscribers.stats().then(setStats)
+    window.api.campaigns.list().then(c => setCampaigns(c.slice(0, 6)))
+    loadBrevo()
+    loadDaily()
+  }, [])
 
   const statCards = [
     { label: 'Total Subscribers', value: stats.total,       icon: Users, color: 'var(--accent)',  nav: 'subscribers' },

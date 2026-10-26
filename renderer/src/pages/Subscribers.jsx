@@ -376,7 +376,7 @@ export default function Subscribers() {
 
       {/* Modals */}
       {(showAdd || editSub) && (
-        <SubModal sub={editSub} groups={groups} onClose={() => { setShowAdd(false); setEditSub(null) }} onSave={() => { setShowAdd(false); setEditSub(null); load() }} />
+        <SubModal sub={editSub} onClose={() => { setShowAdd(false); setEditSub(null) }} onSave={() => { setShowAdd(false); setEditSub(null); load() }} />
       )}
       {showGroup && (
         <GroupAssignModal groups={groups} onAssign={handleAssignGroup} onClose={() => setShowGroup(false)} />
@@ -404,7 +404,7 @@ function StatusBadge({ status }) {
   return <span className={`badge ${map[status] || 'badge-gray'}`}>{status}</span>
 }
 
-function SubModal({ sub, groups, onClose, onSave }) {
+function SubModal({ sub, onClose, onSave }) {
   const [form, setForm] = useState(sub || { email: '', name: '', first_name: '', last_name: '', phone: '', company: '', status: 'active' })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 

@@ -17,14 +17,13 @@ const SPAM_BODY_WORDS = [
   'dear friend', 'once in a lifetime', 'incredible deal',
 ]
 
-export function checkSpam(subject, html, text) {
+export function checkSpam(subject, html) {
   const issues   = []
   const warnings = []
   let score = 0
 
   const subjectLower = (subject || '').toLowerCase()
   const bodyText = html ? stripHtml(html).toLowerCase() : ''
-  const plainText = (text || '').toLowerCase()
 
   // ── Subject checks ────────────────────────────────────────────────────────
   if (!subject || subject.trim().length === 0) {

@@ -103,4 +103,4 @@ async function getCampaignMetricsFor(apiKey, camp, variant = '', sentHere = fals
   return getCampaignMetrics(apiKey, tags);
 }
 
-module.exports = { getAccountStats, getTodayStats, getCampaignMetrics, getCampaignMetricsFor };
+module.exports = { getAccountStats, getTodayStats, getCampaignMetricsFor };

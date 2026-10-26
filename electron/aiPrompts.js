@@ -1,6 +1,4 @@
-// All AI system prompts and output schemas in one place. Bump PROMPT_VERSION
-// when a prompt changes meaningfully, so ai_log rows can be compared over time.
-const PROMPT_VERSION = 2;
+// All AI system prompts and output schemas in one place.
 
 const BUILTIN_TAGS = ['name', 'first_name', 'last_name', 'email', 'company', 'unsubscribe'];
 
@@ -297,7 +295,7 @@ Rules:
 }
 
 module.exports = {
-  PROMPT_VERSION, BUILTIN_TAGS, TONES, REWRITE_ACTIONS,
+  BUILTIN_TAGS, TONES, REWRITE_ACTIONS,
   writerSystem, reviewerSystem, analystSystem,
   EMAIL_SCHEMA, SUBJECTS_SCHEMA, REWRITE_SCHEMA, REVIEW_SCHEMA,
   PREVIEW_TEXT_SCHEMA, TRANSLATION_SCHEMA, SEQUENCE_SCHEMA, REPORT_SCHEMA,

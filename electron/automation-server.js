@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const license = require('./license');
 
 let server = null;
+let lastError = '';
+let startup = Promise.resolve();   // settles once the server listens or fails
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -30,7 +32,7 @@ async function aiCall(fn) {
   catch (err) { return { ok: false, error: err.message, code: err.code }; }
 }
 
-function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
+function start({ settings, db, mailer, mainWindow }) {
   if (server) return { port: server.address()?.port };
 
   const cfg = settings.getAll();
@@ -88,7 +90,7 @@ function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
       if (method === 'POST' && parts[0] === 'campaigns' && parts[2] === 'send') {
         const body = await readBody(req);
         const result = await mailer.sendCampaign(
-          { campaign_id: Number(parts[1]), ...body }, mainWindow, getUnsubPort
+          { campaign_id: Number(parts[1]), ...body }, mainWindow
         );
         return json(res, 200, result);
       }
@@ -97,7 +99,7 @@ function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
       if (method === 'POST' && parts[0] === 'campaigns' && parts[2] === 'schedule') {
         const body = await readBody(req);
         const result = mailer.scheduleCampaign(
-          { campaign_id: Number(parts[1]), send_at: body.send_at }, mainWindow, getUnsubPort
+          { campaign_id: Number(parts[1]), send_at: body.send_at }, mainWindow
         );
         return json(res, 200, result);
       }
@@ -169,8 +171,20 @@ function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
     }
   });
 
-  server.listen(cfg.automation_port, '127.0.0.1', () => {
-    console.log(`[Automation API] listening on http://127.0.0.1:${cfg.automation_port} (token in Settings)`);
+  lastError = '';
+  const srv = server;
+  startup = new Promise((resolve) => {
+    // Without this, a port already in use would throw in the main process.
+    srv.on('error', (err) => {
+      lastError = err.code === 'EADDRINUSE' ? `Port ${cfg.automation_port} is already in use by another program.` : err.message;
+      console.error('[Automation API]', lastError);
+      if (server === srv) server = null;
+      resolve();
+    });
+    srv.listen(cfg.automation_port, '127.0.0.1', () => {
+      console.log(`[Automation API] listening on http://127.0.0.1:${cfg.automation_port} (token in Settings)`);
+      resolve();
+    });
   });
 
   return { port: cfg.automation_port, token };
@@ -178,6 +192,11 @@ function start({ settings, db, mailer, mainWindow, getUnsubPort }) {
 
 function stop() {
   if (server) { server.close(); server = null; }
+  lastError = '';
 }
 
-module.exports = { start, stop };
+const isRunning = () => !!server?.listening;
+const getLastError = () => lastError;
+const whenStarted = () => startup;
+
+module.exports = { start, stop, isRunning, getLastError, whenStarted };

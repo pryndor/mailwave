@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ListOrdered, X, RefreshCw, Check, AlertTriangle, Sparkles } from 'lucide-react'
 import toast from 'react-hot-toast'
+import ToneSelect from './ToneSelect.jsx'
 
 const dim = { fontSize: 12, color: 'var(--text-dim)' }
 
@@ -102,13 +103,7 @@ export default function AISequence({ onClose, onCreated }) {
               </div>
               <div className="form-group">
                 <label>Tone</label>
-                <select className="select" value={brief.tone} onChange={e => setB('tone', e.target.value)}>
-                  <option value="">Brand default (Settings)</option>
-                  <option value="friendly">Friendly</option>
-                  <option value="formal">Formal</option>
-                  <option value="clinical">Clinical / scientific</option>
-                  <option value="playful">Playful</option>
-                </select>
+                <ToneSelect value={brief.tone} onChange={v => setB('tone', v)} />
               </div>
             </div>
           </>

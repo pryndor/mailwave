@@ -732,12 +732,6 @@ function markTestSent(campaign_id) {
   db.prepare(`UPDATE campaigns SET test_sent_at = datetime('now') WHERE id = ?`).run(campaign_id);
 }
 
-function unsubscribeByEmail(email) {
-  db.prepare(`UPDATE subscribers SET status='unsubscribed', updated_at=datetime('now') WHERE email=?`)
-    .run(email.toLowerCase().trim());
-  return { ok: true };
-}
-
 // ── Daily send tracking ───────────────────────────────────────────────────────
 // Counts this device's sends by default (each person sends through their own
 // SMTP account). teamWide also counts teammates' sends synced in by Team
@@ -865,7 +859,7 @@ module.exports = {
   listCampaigns, getCampaign, saveCampaign, deleteCampaign, duplicateCampaign,
   ensureCampaignUid, campaignSentHere,
   listHistory, logSend, updateCampaignProgress,
-  getActiveSubscribersForCampaign, unsubscribeByEmail,
+  getActiveSubscribersForCampaign,
   campaignReachedEmails, markSubscriberBounced, markTestSent, setAbWinner,
   // Daily limit & resume
   getTodaySentCount, updateCampaignResume, updateCampaignScheduledAt,

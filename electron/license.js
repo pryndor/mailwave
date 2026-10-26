@@ -74,4 +74,4 @@ function isPro(licenseKey) {
   return getStatus(licenseKey).plan === 'pro';
 }
 
-module.exports = { getStatus, isPro, GRACE_DAYS };
+module.exports = { getStatus, isPro };

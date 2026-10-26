@@ -55,4 +55,4 @@ function groupFailures(rows) {
   return [...groups.values()].sort((a, b) => b.count - a.count);
 }
 
-module.exports = { classifySmtpError, groupFailures, CAUSES };
+module.exports = { classifySmtpError, groupFailures };

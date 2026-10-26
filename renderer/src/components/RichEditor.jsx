@@ -242,7 +242,7 @@ export default function RichEditor({ value, onChange, customTags = [], aiReady =
               <div style={{ fontSize: 11, color: 'var(--text-dim)', padding: '4px 8px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Click to insert at cursor
               </div>
-              {allTags.map(({ tag, label, hint }) => (
+              {allTags.map(({ tag, hint }) => (
                 <button
                   key={tag}
                   onMouseDown={e => { e.preventDefault(); insertMergeTag(tag) }}

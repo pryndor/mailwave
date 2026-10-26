@@ -203,15 +203,27 @@ const withSync = (fn) => async (...args) => {
 };
 
 // Automation API settings
-ipcMain.handle('automation:get', () => {
+// Automation API (Settings → Automation API). The server only runs on Pro.
+const automationStatus = () => {
   const cfg = settings.getAll();
-  return { enabled: cfg.automation_enabled, port: cfg.automation_port, token: cfg.automation_token };
-});
-ipcMain.handle('automation:save', (_, data) => {
-  const result = settings.save(data);
+  return {
+    enabled: !!cfg.automation_enabled, port: Number(cfg.automation_port) || 8787, token: cfg.automation_token || '',
+    running: automation.isRunning(), error: automation.getLastError(), pro: license.isPro(cfg.license_key),
+  };
+};
+ipcMain.handle('automation:get', () => automationStatus());
+ipcMain.handle('automation:save', async (_, { enabled, port, token } = {}) => {
+  const p = Number(port);
+  if (!Number.isInteger(p) || p < 1024 || p > 65535) return { ok: false, error: 'Port must be a number from 1024 to 65535.' };
+  settings.save({
+    automation_enabled: !!enabled,
+    automation_port: p,
+    ...(typeof token === 'string' ? { automation_token: token.trim() } : {}),
+  });
   automation.stop();
   automation.start({ settings, db, mailer, mainWindow });
-  return result;
+  await automation.whenStarted();
+  return { ok: true, ...automationStatus() };
 });
 
 // Settings
@@ -224,10 +236,12 @@ ipcMain.handle('startup:set', (_, enabled) => {
   return startupControl.setEnabled(enabled);
 });
 
-// team_* keys belong to Team Sync (managed via the team:* handlers) and ai_* keys
-// to the AI section (ai:* handlers): secrets never reach the renderer, and the
-// Settings form's stale copy can't overwrite them.
-const withoutSecretKeys = (obj) => Object.fromEntries(Object.entries(obj || {}).filter(([k]) => !k.startsWith('team_') && !k.startsWith('ai_')));
+// team_* keys belong to Team Sync (team:* handlers), ai_* keys to the AI section
+// (ai:* handlers) and automation_* keys to the Automation API section
+// (automation:* handlers): secrets never reach the Settings form, and its stale
+// copy can't overwrite them.
+const OWN_SECTIONS = ['team_', 'ai_', 'automation_'];
+const withoutSecretKeys = (obj) => Object.fromEntries(Object.entries(obj || {}).filter(([k]) => !OWN_SECTIONS.some(p => k.startsWith(p))));
 ipcMain.handle('settings:get',    () => withoutSecretKeys(settings.getAll()));
 ipcMain.handle('settings:save',   (_, data) => settings.save(withoutSecretKeys(data)));
 
@@ -295,7 +309,6 @@ ipcMain.handle('templates:delete', withSync((_, id)    => db.deleteTemplate(id))
 
 // Campaigns
 ipcMain.handle('campaigns:list',      ()         => db.listCampaigns());
-ipcMain.handle('campaigns:get',       (_, id)    => db.getCampaign(id));
 ipcMain.handle('campaigns:save',      withSync((_, camp)  => db.saveCampaign(camp)));
 ipcMain.handle('campaigns:delete',    withSync((_, id)    => db.deleteCampaign(id)));
 ipcMain.handle('campaigns:send',      (_, data)  => mailer.sendCampaign(data, mainWindow));
@@ -321,12 +334,9 @@ ipcMain.handle('history:failures', (_, campaign_id) => db.campaignFailureGroups(
 // Scheduling
 ipcMain.handle('campaigns:schedule',            withSync((_, data) => mailer.scheduleCampaign(data, mainWindow)));
 ipcMain.handle('campaigns:cancelSchedule',      withSync((_, id)   => mailer.cancelSchedule(id)));
-ipcMain.handle('campaigns:listScheduled',       ()        => mailer.listScheduled());
-ipcMain.handle('campaigns:listScheduledDetails',()        => mailer.listScheduledDetails());
 
 // File dialogs
 ipcMain.handle('dialog:openFile', async (_, opts) => dialog.showOpenDialog(mainWindow, opts));
-ipcMain.handle('dialog:saveFile', async (_, opts) => dialog.showSaveDialog(mainWindow, opts));
 
 // Duplicate campaign
 ipcMain.handle('campaigns:duplicate', withSync((_, id) => db.duplicateCampaign(id)));

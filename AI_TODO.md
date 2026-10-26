@@ -1,27 +1,31 @@
 # AI features: TODO
 
-Status: **Phase 1 writing + review built (2026-10-17).** Written 2026-10-03.
+Written 2026-10-03. Last revised 2026-10-26.
 
-Built so far: `electron/ai.js`, `electron/aiPrompts.js`, `electron/secrets.js` (shared with Team Sync),
-`ai:*` IPC, Settings → AI Writing & Review, "Write with AI" (new draft / follow-up / reply to a pasted
-message), subject suggestions (+ "use as B"), AI Rewrite in the editor toolbar, AI Review in the editor
-and the pre-send checklist (Pro), `ai_log` table. Tests: fake-API harness (not in repo yet, see §6).
+**Status:** phases 1–3 are built and tested (`npm test`). Writing helpers are free with the user's own
+API key; review, campaign reports and the Automation API's AI endpoints are Pro. No feature sends
+subscriber addresses, names or field values to the AI; `tests/ai.test.js` checks this.
 
-Decisions taken: fast = `claude-haiku-5-5` (newer and ~10x cheaper than Haiku 4.5), smart =
-`claude-sonnet-5-5`; both editable in Settings. BYO key; writing free, review Pro. Requests to Sonnet 5.5
-use the server-side refusal fallback (`fallbacks: "default"`), since health/drug wording can trip safety
-classifiers. Still open: streaming, "send subscriber data" toggle (still nothing sends subscriber data:
-the campaign report sends aggregate counts only).
+Decisions taken: bring-your-own key for everyone, no hosted proxy. Default models: fast =
+`claude-haiku-5-5`, smart = `claude-sonnet-5-5`, both editable in Settings (other providers get their own
+defaults from `aiProviders.js`). Requests to Sonnet 5.5 use the server-side refusal fallback, since
+health/drug wording can trip safety classifiers.
 
-Phase 3 built (2026-10-26): Smart filter + save as group, CSV column mapping, continue writing,
-A/B test with automatic winner, brand voice Team Sync, `npm test` suite (`tests/`, runs under
-Electron's Node for better-sqlite3).
+## What's left, in priority order
 
-Phase 2 built (2026-10-26): preheader, plain text, translation, CTA rewrite, sequence writer,
-rule-based deliverability/accessibility hints, failure analysis, AI campaign report, automation
-`/ai/*` endpoints. Also fixed: AI buttons stayed disabled for providers without a key (Ollama, custom).
-
-Goal: add AI to MailWave for (1) writing emails, (2) analysing emails before and after sending, and (3) a set of smaller AI helpers that fit the existing app (subscribers, smart schedule, Brevo stats, automation API).
+1. **Test with Ollama offline and with no key** (§6). Cheap, and catches regressions in the setup flow.
+2. **Streaming** (§0.1). Long drafts and sequences show only a spinner until the whole result arrives.
+3. **Dashboard insight card** (§2.2). Mostly rule-based from data that already exists; AI optional.
+4. **Image alt text generator** (§3). Small, and the pre-send check already flags missing alt text.
+5. **In-app help assistant** (§3). README and TEAM_SYNC.md are now complete enough to serve as context.
+6. **Cost check per feature** (§6). Monthly calls and tokens are shown; per-feature cost isn't.
+7. **Ask your data** (§2.2). Read-only query functions, like the Smart filter's structured approach.
+8. **Template generator / template from screenshot** (§1, §3). Blocked: the editor keeps only simple
+   tags, so table layouts would be stripped. Needs an HTML template mode first.
+9. **Needs per-subscriber open/click data first** (MailWave doesn't store it yet): engagement scoring,
+   AI send-time advice (§3).
+10. **Needs the privacy toggle first** (§0.5), since they would send subscriber data: per-recipient
+    opening lines, dynamic content blocks (§3).
 
 ---
 
@@ -30,8 +34,8 @@ Goal: add AI to MailWave for (1) writing emails, (2) analysing emails before and
 ### 0.1 AI provider module: `electron/ai.js` (new)
 - [x] One `ai.complete({ system, messages, json, maxTokens })` function, used by every feature below.
 - [x] Default provider: Claude API (`@anthropic-ai/sdk`).
-  - [ ] Quick tasks (subject lines, rewrite, classify): `claude-haiku-4-5-20251001`.
-  - [ ] Long tasks (full drafts, campaign reports): `claude-sonnet-5-5`.
+  - [x] Quick tasks (subject lines, rewrite, classify): `claude-haiku-5-5` (newer and cheaper than the Haiku 4.5 first planned).
+  - [x] Long tasks (full drafts, campaign reports): `claude-sonnet-5-5`.
 - [x] Optional providers behind the same interface: OpenAI-compatible endpoint, local Ollama (offline / privacy users). Done in `electron/aiProviders.js`: one key field, provider auto-detected from the key (Claude, OpenAI, Gemini, Groq, xAI, Mistral, DeepSeek, OpenRouter); Ollama / custom endpoint / model choice under Advanced.
 - [ ] Streaming support (`ai:stream` IPC + `webContents.send('ai:chunk')`) so drafts appear as they are written.
 - [x] Structured output helper (JSON schema / tool use) for the analysis features.
@@ -50,13 +54,13 @@ Goal: add AI to MailWave for (1) writing emails, (2) analysing emails before and
 - [x] Never expose the API key to the renderer. All calls go through the main process.
 
 ### 0.4 Licensing / plan gating (`license.js`, `trial.js`)
-- [ ] Decide model: BYO key (user pays Anthropic) vs. our hosted proxy (we pay, Pro only). Recommendation: **BYO key for Free, Pro unlocks the advanced features** (analysis, reports, bulk personalisation).
+- [x] Decide model: BYO key (user pays Anthropic) vs. our hosted proxy (we pay, Pro only). Decided: **BYO key for everyone; writing free, review and reports Pro.**
 - [x] Gate in main process with `license.isPro()` / trial, same as `smartSchedule.js`.
 - [x] Usage counter per month (tokens + calls) shown in Settings.
 
 ### 0.5 Privacy and safety
-- [ ] Settings toggle: "Send subscriber data to AI" (off by default). When off, only campaign content is sent, never emails/names/custom fields.
-- [ ] Strip / pseudonymise emails before sending subscriber data (`user_123@…`).
+- [ ] Settings toggle: "Send subscriber data to AI" (off by default). When off, only campaign content is sent, never emails/names/custom fields. Not needed yet: no current feature sends subscriber data. Build it together with the first feature that does.
+- [ ] Strip / pseudonymise emails before sending subscriber data (`user_123@…`). Same as above.
 - [x] Short notice in Settings + README on what leaves the device.
 - [x] Log AI calls (feature, model, tokens, time) in a new `ai_log` table. No content stored by default.
 
@@ -107,7 +111,7 @@ Main place: `Campaigns.jsx` editor + `RichEditor.jsx` toolbar + `Templates.jsx`.
 
 ### Subscribers (`Subscribers.jsx`, `db.js`)
 - [x] **CSV import mapping**: AI guesses which column is email / first name / country / timezone when headers are messy. New "Match columns" step: rules (`utils/importMapping.js`) first, "Guess with AI" for the rest; sends headers and value *shapes* only.
-- [x] **Data cleaning**: fix name casing, split full names, spot role addresses (info@, admin@), likely typo domains (gmial.com), duplicates. Role, typo, duplicate, throwaway, spam-trap and no-MX checks done rule-based at import (`electron/contactChecks.js`); name casing not done.
+- [x] **Data cleaning**: fix name casing, split full names, spot role addresses (info@, admin@), likely typo domains (gmial.com), duplicates. Role, typo, duplicate, throwaway, spam-trap and no-MX checks done rule-based at import (`electron/contactChecks.js`). Not done: name casing, splitting full names.
 - [x] **Auto-segmentation**: suggest groups from custom fields + engagement (e.g. "engaged doctors in India"). Partly: any Smart filter can be saved as a group. No automatic suggestions yet.
 - [ ] **Engagement scoring / churn risk** per subscriber (rule-based score first, AI explains it).
 - [x] **Natural-language filter**: "subscribers from Germany who never opened" builds the filter. Smart filter on Subscribers (`ai:subscriberFilter` → structured filter → `db.filterSql`, bound parameters only). Opens/clicks aren't tracked per subscriber, so those parts are reported as unsupported.
@@ -133,41 +137,23 @@ Main place: `Campaigns.jsx` editor + `RichEditor.jsx` toolbar + `Templates.jsx`.
 
 ---
 
-## 4. Code to modify (summary)
+## 4. Where the AI code lives
 
-| File | Change |
+| File | What |
 |---|---|
-| `package.json` | add `@anthropic-ai/sdk` (and optional `ollama` client) |
-| `electron/ai.js` | **new**: provider wrapper, prompts, JSON helpers |
-| `electron/aiPrompts.js` | **new**: all system prompts in one place, versioned |
-| `electron/settings.js` | AI defaults, brand voice |
-| `electron/main.js` | `ai:*` IPC handlers, key kept out of `settings:get` |
-| `electron/preload.js` | `window.api.ai` |
-| `electron/db.js` | `ai_log` table, read-only stats queries for "Ask your data", A/B fields on `campaigns` |
-| `electron/mailer.js` | personalised lines, A/B split, winner pick |
-| `electron/smartSchedule.js` | engagement-based send time |
-| `electron/brevo.js` | per-recipient open/click data for analysis |
-| `electron/automation-server.js` | `/ai/*` endpoints |
-| `electron/teamStore.js` | sync brand voice + saved prompts |
-| `renderer/src/components/AIPanel.jsx` | **new**: write-with-AI side panel |
-| `renderer/src/components/RichEditor.jsx` | AI toolbar (rewrite / continue) |
-| `renderer/src/components/PreSendChecklist.jsx` | AI review section |
-| `renderer/src/components/AIInsights.jsx` | **new**: report + dashboard card |
-| `renderer/src/pages/Campaigns.jsx` | open AI panel, subject options, A/B setup |
-| `renderer/src/pages/History.jsx` | campaign AI report, follow-up draft |
-| `renderer/src/pages/Subscribers.jsx` | import mapping, cleaning, NL filter, segments |
-| `renderer/src/pages/Templates.jsx` | template generator |
-| `renderer/src/pages/Settings.jsx` | AI section (provider, key, models, brand voice, privacy, usage) |
-| `README.md` | AI setup + privacy notes |
+| `electron/ai.js` | Every AI feature, the `complete()` entry point, output checks, the mock provider |
+| `electron/aiPrompts.js` | System prompts and structured-output schemas |
+| `electron/aiProviders.js` | Provider detection from the key, OpenAI-compatible calls, model lists |
+| `electron/smtpErrors.js` | Rule-based failure causes (History, free) |
+| `electron/db.js` | `ai_log`, `filterSql` for the Smart filter, report queries, A/B fields |
+| `electron/teamStore.js` | Brand voice sync (`brand` entity) |
+| `electron/automation-server.js` | `POST /ai/draft`, `/ai/review`, `/ai/report` |
+| `renderer/src/components/AIWriter.jsx`, `AISequence.jsx`, `AIReview.jsx`, `AISettings.jsx` | Writing panel, sequence writer, review, settings |
+| `renderer/src/pages/History.jsx` | Failure causes and the AI campaign report |
+| `renderer/src/pages/Subscribers.jsx`, `utils/importMapping.js` | Smart filter, column matching |
+| `tests/ai.test.js` | Prompts, schemas, sanitising, privacy, Pro gating |
 
 ---
-
-## 5. Suggested order
-
-1. **Phase 1 (MVP)**: 0.1–0.5 foundation, draft from brief, subject lines, rewrite selection, AI pre-send review.
-2. **Phase 2**: campaign reports, bounce analysis, follow-up draft, template generator, translation.
-3. **Phase 3**: subscriber cleaning / segmentation, NL filter, "Ask your data", dashboard insights.
-4. **Phase 4**: per-recipient personalisation, A/B testing, AI send time, automation API endpoints, Team Sync of brand voice.
 
 ## 6. Testing
 

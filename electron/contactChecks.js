@@ -164,6 +164,5 @@ function emptyDropped() {
 }
 
 module.exports = {
-  DROP_REASONS, normalizeEmail, getEmailSuggestion, getDropReason,
-  isDisposableDomain, findDeadDomains, emptyDropped,
+  normalizeEmail, getEmailSuggestion, getDropReason, findDeadDomains, emptyDropped,
 };

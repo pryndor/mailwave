@@ -1,10 +1,10 @@
 # MailWave Pro webhook — Hetzner VPS version
 
-Same job as `payment-webhook/` (Vercel) and `payment-webhook-cpanel/`
-(GoDaddy Python) — this one reuses the exact same Node.js logic as the
-Vercel version verbatim, just running as a standalone `server.js` process
-behind Apache instead of a serverless function. No SMTP-blocking risk like
-shared hosting can have, no PHP/Python rewrite needed, full control.
+Razorpay calls this on every successful subscription charge. It verifies the
+request is genuinely from Razorpay, signs a license token with the private key
+from `license-tooling/`, and emails it to the buyer through your SMTP account.
+It runs as a standalone `server.js` process behind Apache. No database: fully
+stateless.
 
 Meant for the same Hetzner box already running `ncloud.drugvigil.com`
 (Apache, certbot-managed TLS — see the Nextcloud/LibreSign setup notes),

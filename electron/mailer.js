@@ -1,7 +1,6 @@
 const nodemailer = require('nodemailer');
 const crypto     = require('crypto');
 const fs         = require('fs');
-const path       = require('path');
 const settings   = require('./settings');
 const db         = require('./db');
 const teamSync   = require('./teamSync');
@@ -237,13 +236,13 @@ async function pickAbWinner(campaign, cfg) {
 // With Team Sync on, a real send first claims the campaign's lock in the team
 // repo so two teammates' machines never send the same campaign twice.
 // run_key names this attempt (see teamSync.acquireSendLock); manual sends get a fresh one.
-async function sendCampaign(opts, mainWindow, getPort) {
-  if (opts.preview_to) return runCampaign(opts, mainWindow, getPort);
+async function sendCampaign(opts, mainWindow) {
+  if (opts.preview_to) return runCampaign(opts, mainWindow);
   const lock = await teamSync.acquireSendLock(opts.campaign_id, opts.run_key || `manual:${Date.now()}`);
   if (!lock.ok) return { ok: false, error: lock.error, teamLocked: true, retry: !!lock.retry, alreadyDone: !!lock.alreadyDone };
   let result;
   try {
-    result = await runCampaign(opts, mainWindow, getPort);
+    result = await runCampaign(opts, mainWindow);
   } finally {
     if (!lock.local) await teamSync.releaseSendLock(opts.campaign_id, result);
   }
@@ -252,16 +251,16 @@ async function sendCampaign(opts, mainWindow, getPort) {
 
 // Automatic runs (schedule, auto-resume) retry when the team repo was unreachable,
 // instead of either skipping the send or risking a duplicate.
-async function sendWithRetry(opts, mainWindow, getPort, attempt = 0) {
-  const result = await sendCampaign(opts, mainWindow, getPort);
+async function sendWithRetry(opts, mainWindow, attempt = 0) {
+  const result = await sendCampaign(opts, mainWindow);
   if (result?.retry && attempt < 15) {
     console.log(`[Mailer] Campaign ${opts.campaign_id}: ${result.error} — retrying in 2 min`);
-    setTimeout(() => sendWithRetry(opts, mainWindow, getPort, attempt + 1), 2 * 60 * 1000);
+    setTimeout(() => sendWithRetry(opts, mainWindow, attempt + 1), 2 * 60 * 1000);
   }
   return result;
 }
 
-async function runCampaign({ campaign_id, preview_to, start_offset = 0, resume = false }, mainWindow, getPort) {
+async function runCampaign({ campaign_id, preview_to, start_offset = 0, resume = false }, mainWindow) {
   stopRequested.delete(campaign_id);
   const cfg      = settings.getAll();
   const campaign = db.getCampaign(campaign_id);
@@ -562,13 +561,13 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0, resume =
 }
 
 // ── Resume a paused campaign ──────────────────────────────────────────────────
-async function resumeCampaign(campaign_id, mainWindow, getPort) {
+async function resumeCampaign(campaign_id, mainWindow) {
   const campaign = db.getCampaign(campaign_id);
   if (!campaign) return { ok: false, error: 'Campaign not found' };
   if (campaign.status !== 'paused') return { ok: false, error: 'Campaign is not paused' };
   return sendCampaign(
     { campaign_id, start_offset: campaign.resume_offset || 0, resume: true, run_key: `resume:${campaign.resume_at || 'manual'}` },
-    mainWindow, getPort
+    mainWindow
   );
 }
 
@@ -576,7 +575,7 @@ async function resumeCampaign(campaign_id, mainWindow, getPort) {
 // Stores { timer, send_at, name } per campaign_id
 const scheduledJobs = new Map();
 
-function scheduleCampaign({ campaign_id, send_at, run_key }, mainWindow, getPort) {
+function scheduleCampaign({ campaign_id, send_at, run_key }, mainWindow) {
   const delay = new Date(send_at).getTime() - Date.now();
   if (delay <= 0) return { ok: false, error: 'Scheduled time is in the past' };
   if (scheduledJobs.has(campaign_id)) clearTimeout(scheduledJobs.get(campaign_id).timer);
@@ -590,7 +589,7 @@ function scheduleCampaign({ campaign_id, send_at, run_key }, mainWindow, getPort
   const timer = setTimeout(async () => {
     scheduledJobs.delete(campaign_id);
     db.updateCampaignScheduledAt(campaign_id, null);
-    await sendWithRetry({ campaign_id, run_key: run_key || `sched:${send_at}` }, mainWindow, getPort);
+    await sendWithRetry({ campaign_id, run_key: run_key || `sched:${send_at}` }, mainWindow);
   }, delay);
 
   scheduledJobs.set(campaign_id, { timer, send_at, name });
@@ -605,10 +604,6 @@ function cancelSchedule(campaign_id) {
   return { ok: true };
 }
 
-function listScheduled() {
-  return Array.from(scheduledJobs.keys());
-}
-
 function listScheduledDetails() {
   return Array.from(scheduledJobs.entries()).map(([id, { send_at, name }]) => ({
     id, send_at, name,
@@ -618,7 +613,7 @@ function listScheduledDetails() {
 // Align in-memory timers with scheduled_at in the DB — after a teammate
 // schedules, reschedules or cancels a campaign and it arrives via Team Sync.
 // Every device arms the timer; the send lock decides who actually sends.
-function reconcileSchedules(mainWindow, getPort) {
+function reconcileSchedules(mainWindow) {
   for (const c of db.listCampaigns()) {
     const job = scheduledJobs.get(c.id);
     const wanted = c.scheduled_at && c.status !== 'sent' && c.status !== 'sending';
@@ -630,9 +625,9 @@ function reconcileSchedules(mainWindow, getPort) {
     if (new Date(c.scheduled_at).getTime() <= Date.now()) {
       if (job) { clearTimeout(job.timer); scheduledJobs.delete(c.id); }
       db.updateCampaignScheduledAt(c.id, null);
-      sendWithRetry({ campaign_id: c.id, run_key: `sched:${c.scheduled_at}` }, mainWindow, getPort);
+      sendWithRetry({ campaign_id: c.id, run_key: `sched:${c.scheduled_at}` }, mainWindow);
     } else {
-      scheduleCampaign({ campaign_id: c.id, send_at: c.scheduled_at }, mainWindow, getPort);
+      scheduleCampaign({ campaign_id: c.id, send_at: c.scheduled_at }, mainWindow);
     }
   }
 }
@@ -642,7 +637,7 @@ function sleep(ms) {
 }
 
 module.exports = {
-  testConnection, sendCampaign, sendWithRetry, stopSending, reconcileSchedules,
+  testConnection, sendCampaign, stopSending, reconcileSchedules,
   resumeCampaign, previewMerge,
-  scheduleCampaign, cancelSchedule, listScheduled, listScheduledDetails,
+  scheduleCampaign, cancelSchedule, listScheduledDetails,
 };

@@ -56,7 +56,6 @@ contextBridge.exposeInMainWorld('api', {
   // Campaigns
   campaigns: {
     list:                   ()     => invoke('campaigns:list'),
-    get:                    (id)   => invoke('campaigns:get', id),
     save:                   (camp) => invoke('campaigns:save', camp),
     delete:                 (id)   => invoke('campaigns:delete', id),
     duplicate:              (id)   => invoke('campaigns:duplicate', id),
@@ -65,8 +64,6 @@ contextBridge.exposeInMainWorld('api', {
     resume:                 (id)   => invoke('campaigns:resume', id),
     schedule:               (data) => invoke('campaigns:schedule', data),
     cancelSchedule:         (id)   => invoke('campaigns:cancelSchedule', id),
-    listScheduled:          ()     => invoke('campaigns:listScheduled'),
-    listScheduledDetails:   ()     => invoke('campaigns:listScheduledDetails'),
     previewMerge:           (data) => invoke('campaigns:previewMerge', data),
     recipientCount:         (group_ids) => invoke('campaigns:recipientCount', group_ids),
     smartSchedule:          (data) => invoke('campaigns:smartSchedule', data),
@@ -82,7 +79,6 @@ contextBridge.exposeInMainWorld('api', {
   // File dialogs
   dialog: {
     openFile: (opts) => invoke('dialog:openFile', opts),
-    saveFile: (opts) => invoke('dialog:saveFile', opts),
   },
 
   // FTP/SFTP sync

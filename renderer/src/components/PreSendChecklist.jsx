@@ -7,16 +7,14 @@ import AIReview from './AIReview.jsx'
 export default function PreSendChecklist({ campaign, subscriberCount, onConfirm, onCancel }) {
   const [checks, setChecks]   = useState([])
   const [spam, setSpam]       = useState(null)
-  const [settings, setSettings] = useState(null)
   const [ready, setReady]     = useState(false)
 
   useEffect(() => {
     Promise.all([window.api.settings.get(), window.api.subscribers.customFields()]).then(([s, customKeys]) => {
-      setSettings(s)
       const fromEmail = campaign.from_email || s.from_email
       const fromName  = campaign.from_name  || s.from_name
 
-      const spamResult = checkSpam(campaign.subject, campaign.html, campaign.text)
+      const spamResult = checkSpam(campaign.subject, campaign.html)
       setSpam(spamResult)
 
       // What inboxes show for a subscriber without a name, not the tags' own length.
