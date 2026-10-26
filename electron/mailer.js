@@ -55,43 +55,96 @@ function buildUnsubUrl(email, campaignId, cfg) {
 }
 
 // ── Personalization ───────────────────────────────────────────────────────────
-function personalize(str, sub, unsubUrl) {
-  if (!str) return '';
-  const displayName = sub.name || sub.first_name || sub.email.split('@')[0];
-  let out = str
-    .replace(/\{\{name\}\}/gi,        displayName)
-    .replace(/\{\{first_name\}\}/gi,  sub.first_name || displayName)
-    .replace(/\{\{last_name\}\}/gi,   sub.last_name  || '')
-    .replace(/\{\{email\}\}/gi,       sub.email)
-    .replace(/\{\{company\}\}/gi,     sub.company    || '')
-    .replace(/\{\{unsubscribe\}\}/gi, unsubUrl);
+// {{first_name}} prints the subscriber's first name (or their display name),
+// {{first_name|there}} prints "there" for a subscriber without one. Custom CSV
+// fields work the same by key: {{city|your city}}. A known tag with no value
+// and no fallback prints nothing; any other {{...}} goes out as written, which
+// the pre-send checklist points out (renderer/src/utils/mergeTags.js).
+const TAG_PATTERN  = /\{\{\s*([a-z][a-z0-9_]{0,39})\s*(?:\|([^{}]{0,100}?))?\s*\}\}/gi;
+const BUILTIN_TAGS = new Set(['name', 'first_name', 'last_name', 'email', 'company', 'unsubscribe']);
 
-  // Custom CSV fields — any {{fieldname}} matching a key imported from the CSV.
-  const custom = sub.custom_fields || {};
-  for (const [key, val] of Object.entries(custom)) {
-    out = out.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'gi'), val || '');
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// The rich editor stores a fallback as HTML text ("Tom &amp; Jerry"); read it
+// back as text first so escaping doesn't double it.
+function decodeEntities(str) {
+  return String(str)
+    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+}
+
+function tagValue(key, sub, unsubUrl, hasFallback) {
+  const fullName = (sub.name || `${sub.first_name || ''} ${sub.last_name || ''}`).trim();
+  switch (key) {
+    case 'name':        return fullName || (hasFallback ? '' : sub.email.split('@')[0]);
+    case 'first_name':  return sub.first_name || (hasFallback ? '' : fullName || sub.email.split('@')[0]);
+    case 'last_name':   return sub.last_name || '';
+    case 'email':       return sub.email;
+    case 'company':     return sub.company || '';
+    case 'unsubscribe': return unsubUrl;
+    default: {
+      const custom = sub.custom_fields || {};
+      return custom[key] != null ? String(custom[key]) : '';
+    }
   }
-  return out;
+}
+
+// customKeys: every custom field key in the list, so a subscriber without a
+// value for one gets its fallback instead of the raw {{tag}}.
+function personalize(str, sub, unsubUrl, { isHtml = false, customKeys = [] } = {}) {
+  if (!str) return '';
+  const custom = new Set([...customKeys, ...Object.keys(sub.custom_fields || {})].map(k => k.toLowerCase()));
+  return String(str).replace(TAG_PATTERN, (tag, rawKey, fallback) => {
+    const key = rawKey.toLowerCase();
+    if (!BUILTIN_TAGS.has(key) && !custom.has(key)) return tag;
+    const hasFallback = fallback !== undefined;
+    const value = tagValue(key, sub, unsubUrl, hasFallback).trim();
+    const out = value || (hasFallback ? decodeEntities(fallback.trim()) : '');
+    return isHtml ? escapeHtml(out) : out;
+  });
+}
+
+// A subject is a header: whatever the values hold, it stays on one line.
+function personalizeSubject(str, sub, unsubUrl, opts) {
+  return personalize(str, sub, unsubUrl, opts).replace(/[\r\n]+/g, ' ').trim();
 }
 
 // ── Merge preview (no send) ───────────────────────────────────────────────────
 // Renders subject + body for one subscriber, used by the campaign editor's "Preview Merge" panel.
 function previewMerge(campaign, sub) {
-  const unsubUrl = 'https://example.com/unsubscribe';
+  const unsubUrl   = 'https://example.com/unsubscribe';
+  const customKeys = db.listCustomFieldKeys();
   return {
-    subject: personalize(campaign.subject, sub, unsubUrl),
-    html:    personalize(campaign.html,    sub, unsubUrl),
+    subject:      personalizeSubject(campaign.subject, sub, unsubUrl, { customKeys }),
+    preview_text: personalize(campaign.preview_text, sub, unsubUrl, { customKeys }),
+    html:         personalize(campaign.html, sub, unsubUrl, { isHtml: true, customKeys }),
   };
 }
 
 // ── Deliverability: wrap HTML with proper email structure ─────────────────────
-function wrapHtml(innerHtml, fromName, unsubUrl) {
-  const hasUnsub = innerHtml.toLowerCase().includes('unsubscribe');
-  const footer = hasUnsub ? '' : `
+// previewText: the line inboxes show after the subject. Hidden in the body,
+// then padded with invisible characters so the body text doesn't follow it.
+// postalAddress: CAN-SPAM requires a physical address in every marketing email.
+function wrapHtml(innerHtml, fromName, unsubUrl, { previewText = '', postalAddress = '', subject = '' } = {}) {
+  const lower    = innerHtml.toLowerCase();
+  const hasUnsub = lower.includes('unsubscribe');
+  const address  = postalAddress.trim();
+  const showAddress = address && !lower.includes(escapeHtml(address.split('\n')[0].trim()).toLowerCase());
+  const footerLines = [
+    ...(hasUnsub ? [] : [`You received this email from <strong>${escapeHtml(fromName || '')}</strong>.<br>
+      <a href="${escapeHtml(unsubUrl)}" style="color:#888;">Unsubscribe</a>`]),
+    ...(showAddress ? [escapeHtml(address).replace(/\r?\n/g, '<br>')] : []),
+  ];
+  const footer = footerLines.length ? `
     <tr><td style="padding:20px;text-align:center;font-size:11px;color:#888;border-top:1px solid #eee;">
-      You received this email from <strong>${fromName}</strong>.<br>
-      <a href="${unsubUrl}" style="color:#888;">Unsubscribe</a>
-    </td></tr>`;
+      ${footerLines.join('<br><br>')}
+    </td></tr>` : '';
+  const preheader = previewText.trim() ? `
+<div style="display:none;font-size:1px;color:#f4f4f4;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">${escapeHtml(previewText.trim())}${'&#847;&zwnj;&nbsp;'.repeat(90)}</div>` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -99,9 +152,9 @@ function wrapHtml(innerHtml, fromName, unsubUrl) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
-<title></title>
+<title>${escapeHtml(subject)}</title>
 </head>
-<body style="margin:0;padding:0;background:#f4f4f4;">
+<body style="margin:0;padding:0;background:#f4f4f4;">${preheader}
 <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
 <tr><td>
 <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" align="center"
@@ -148,6 +201,41 @@ function calcNextResumeTime(timeStr) {
   return tomorrow.toISOString();
 }
 
+// ── SMTP error classification ────────────────────────────────────────────────
+// What a failed sendMail means for the rest of the send:
+//   bounce     — the address doesn't exist: mark the subscriber bounced, go on
+//   quota      — the provider's sending limit: pause until the daily resume time
+//   blocked    — the provider flagged the account (spam, policy): pause until someone looks
+//   auth       — the SMTP login stopped working: pause until someone looks
+//   transient  — connection dropped or "try again later": wait and retry the same address
+//   failed     — anything else about this one message: log it, go on
+const QUOTA_PATTERN   = /quota|limit (?:exceeded|reached)|exceeded|too many (?:messages|emails|recipients)|sending rate|rate limit|daily (?:sending )?limit|5\.4\.5/i;
+const BLOCKED_PATTERN = /unusual sending|suspicious|account (?:has been )?(?:blocked|suspended|disabled|locked)|sender (?:address )?(?:blocked|rejected)|spam|5\.7\.1 .*(?:policy|abuse)|relay access denied|not authori[sz]ed to send/i;
+const BOUNCE_PATTERN  = /user unknown|unknown user|no such user|does not exist|doesn't exist|mailbox (?:unavailable|not found)|invalid (?:recipient|mailbox|address)|recipient (?:address )?rejected|address rejected|undeliverable|no mailbox|5\.1\.[0-6]/i;
+const TRANSIENT_CODES = new Set(['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'EDNS', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH']);
+
+function classifySmtpError(err) {
+  const code     = err?.code || '';
+  const response = Number(err?.responseCode) || 0;
+  const text     = `${err?.response || ''} ${err?.message || ''}`;
+  if (code === 'EAUTH' || response === 535 || response === 534) return 'auth';
+  if (QUOTA_PATTERN.test(text)) return 'quota';
+  if (BLOCKED_PATTERN.test(text)) return 'blocked';
+  if (TRANSIENT_CODES.has(code) || response === 421 || (response >= 400 && response < 500)) return 'transient';
+  if (response >= 500 && (BOUNCE_PATTERN.test(text) || ([550, 551, 553].includes(response) && code === 'EENVELOPE'))) return 'bounce';
+  return 'failed';
+}
+
+// Waits before retrying the same address after a transient error. After the
+// last one fails too, the campaign pauses and resumes by itself later.
+const RETRY_DELAYS_MS  = [30 * 1000, 2 * 60 * 1000, 5 * 60 * 1000];
+const TRANSIENT_RESUME_MS = 30 * 60 * 1000;
+// Safety stops, like hosted platforms' bounce limits: a list that rejects this
+// much at send time has a problem worth looking at before it costs the domain.
+const BOUNCE_STOP_RATE    = 0.02;
+const BOUNCE_STOP_MIN     = 100;     // attempts before the rate counts
+const FAILURE_STREAK_STOP = 10;      // failures in a row, of any kind
+
 // ── Main send ─────────────────────────────────────────────────────────────────
 // With Team Sync on, a real send first claims the campaign's lock in the team
 // repo so two teammates' machines never send the same campaign twice.
@@ -176,7 +264,7 @@ async function sendWithRetry(opts, mainWindow, getPort, attempt = 0) {
   return result;
 }
 
-async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWindow, getPort) {
+async function runCampaign({ campaign_id, preview_to, start_offset = 0, resume = false }, mainWindow, getPort) {
   stopRequested.delete(campaign_id);
   const cfg      = settings.getAll();
   const campaign = db.getCampaign(campaign_id);
@@ -196,10 +284,20 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
 
   if (!allSubscribers.length) return { ok: false, error: 'No active subscribers found for this campaign.' };
 
-  // Working slice — starts from offset when resuming
-  const subscribers = preview_to ? allSubscribers : allSubscribers.slice(start_offset);
+  // Working list. A resume skips everyone this campaign already reached (on
+  // any teammate's machine) rather than slicing by position: subscribers who
+  // bounced or unsubscribed since the pause would shift positions and make a
+  // slice skip people. idx stays the position in the full list for the A/B split.
+  const indexed = allSubscribers.map((sub, idx) => ({ sub, idx }));
+  let subscribers;
+  if (preview_to) subscribers = indexed;
+  else if (resume) {
+    const reached = db.campaignReachedEmails(campaign_id);
+    subscribers = indexed.filter(({ sub }) => !reached.has(sub.email.toLowerCase()));
+  } else subscribers = indexed.slice(start_offset);
 
-  const transport   = buildTransport(cfg);
+  let transport     = buildTransport(cfg);
+  const customKeys  = db.listCustomFieldKeys();
   const total       = allSubscribers.length;
   const batchSize   = cfg.batch_size        || 50;
   const batchDelay  = (cfg.batch_delay      || 60) * 1000;
@@ -211,12 +309,25 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
 
   if (!preview_to) db.updateCampaignProgress(campaign_id, start_offset, total, 'sending');
 
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, bounced = 0, failStreak = 0;
+
+  // Pauses the campaign where it is. resumeAt: when it goes on by itself
+  // (null = only when someone clicks Resume).
+  const pause = (i, title, message, resumeAt = null) => {
+    db.updateCampaignResume(campaign_id, start_offset + i, resumeAt);
+    db.updateCampaignProgress(campaign_id, start_offset + sent, total, 'paused');
+    db.addNotification('campaign_paused', title, `"${campaign.name}" paused — ${message}`, campaign_id);
+    pushNotif();
+    notify({ paused: true, resumeAt, reason: message });
+    transport.close();
+    stopRequested.delete(campaign_id);
+    return { ok: true, sent, failed, bounced, paused: true, resumeAt, reason: message };
+  };
 
   const notify = (extra = {}) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('send:progress', {
-        sent: start_offset + sent, failed, total, ...extra,
+        sent: start_offset + sent, failed, bounced, total, ...extra,
       });
     }
   };
@@ -256,29 +367,36 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
           campaign_id
         );
         pushNotif();
-        notify({ paused: true, resumeAt });
+        notify({ paused: true, resumeAt, reason: `daily limit of ${dailyLimit} reached. Will auto-resume at ${resumeLabel} tomorrow.` });
         transport.close();
         stopRequested.delete(campaign_id);
         return { ok: true, sent, failed, paused: true, resumeAt };
       }
     }
 
-    const globalIdx = start_offset + i;   // position in full subscriber list
-    const sub       = subscribers[i];
+    const { sub, idx: globalIdx } = subscribers[i];   // globalIdx: position in full subscriber list
     const unsubUrl  = buildUnsubUrl(sub.email, campaign_id, cfg);
     const msgId     = makeMessageId(fromEmail);
-
-    const rawHtml   = personalize(campaign.html, sub, unsubUrl);
-    const htmlBody  = wrapHtml(rawHtml, fromName, unsubUrl);
-    const textBody  = personalize(campaign.text || htmlToText(campaign.html), sub, unsubUrl);
-
-    const toDisplay = (sub.name || sub.first_name)
-      ? `${(sub.name || `${sub.first_name} ${sub.last_name}`).trim()} <${sub.email}>`
-      : sub.email;
 
     const variant     = isAB && globalIdx >= splitAt ? 'b' : 'a';
     const subjectLine = (isAB && variant === 'b') ? campaign.ab_subject_b : campaign.subject;
     const abTag       = isAB ? `campaign-${statsId}-${variant}` : `campaign-${statsId}`;
+    const subject     = personalizeSubject(subjectLine, sub, unsubUrl, { customKeys });
+
+    const rawHtml   = personalize(campaign.html, sub, unsubUrl, { isHtml: true, customKeys });
+    const htmlBody  = wrapHtml(rawHtml, fromName, unsubUrl, {
+      subject,
+      previewText:   personalize(campaign.preview_text, sub, unsubUrl, { customKeys }),
+      postalAddress: cfg.postal_address || '',
+    });
+    let textBody = personalize(campaign.text || htmlToText(campaign.html), sub, unsubUrl, { customKeys });
+    if (cfg.postal_address?.trim() && !textBody.includes(cfg.postal_address.trim().split('\n')[0])) {
+      textBody += `\n\n--\n${cfg.postal_address.trim()}`;
+    }
+
+    const toDisplay = (sub.name || sub.first_name)
+      ? `${(sub.name || `${sub.first_name} ${sub.last_name}`).trim()} <${sub.email}>`
+      : sub.email;
 
     const attachments = (campaign.attachments || []).map(a => ({
       filename: a.name,
@@ -290,7 +408,7 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
       from:      `${fromName} <${fromEmail}>`,
       to:        toDisplay,
       replyTo,
-      subject:   personalize(subjectLine, sub, unsubUrl),
+      subject,
       html:      htmlBody,
       text:      textBody,
       attachments,
@@ -303,24 +421,88 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
       },
     };
 
-    let lastError = '';
-    try {
-      await transport.sendMail(mailOptions);
-      sent++;
-      if (!preview_to) {
-        db.logSend({ campaign_id, subscriber_id: sub.id, email: sub.email, name: sub.name || '', status: 'sent', error: '' });
-      }
-    } catch (err) {
-      failed++;
-      lastError = err.message;
-      if (!preview_to) {
-        db.logSend({ campaign_id, subscriber_id: sub.id, email: sub.email, name: sub.name || '', status: 'failed', error: err.message });
+    // Send, retrying the same address after transient errors (dropped
+    // connection, "try again later") with growing waits.
+    let error = null, kind = null;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await transport.sendMail(mailOptions);
+        error = null;
+        break;
+      } catch (err) {
+        error = err;
+        kind  = classifySmtpError(err);
+        if (preview_to || kind !== 'transient' || attempt >= RETRY_DELAYS_MS.length) break;
+        if (stopRequested.has(campaign_id)) break;
+        const wait = RETRY_DELAYS_MS[attempt];
+        console.log(`[Mailer] Campaign ${campaign_id}: ${err.message} — retrying ${sub.email} in ${wait / 1000}s`);
+        notify({ retrying: true, retryIn: wait / 1000, error: err.message });
+        // A dropped connection can leave the pool unusable; start a fresh one.
+        transport.close();
+        await sleep(wait);
+        transport = buildTransport(cfg);
       }
     }
 
-    if (preview_to && failed > 0) {
+    if (preview_to) {
       transport.close();
-      return { ok: false, error: lastError };
+      if (error) return { ok: false, error: error.message };
+      db.markTestSent(campaign_id);
+      notify({ done: true });
+      return { ok: true, sent: 1, failed: 0, total: 1 };
+    }
+
+    const logRow = (status, msg = '') =>
+      db.logSend({ campaign_id, subscriber_id: sub.id, email: sub.email, name: sub.name || '', status, error: msg });
+
+    if (!error) {
+      sent++;
+      failStreak = 0;
+      logRow('sent');
+    } else if (kind === 'bounce') {
+      // The address doesn't exist: never email it again.
+      bounced++;
+      failStreak = 0;
+      logRow('bounced', error.message);
+      db.markSubscriberBounced(sub.id);
+    } else if (kind === 'failed') {
+      failed++;
+      failStreak++;
+      logRow('failed', error.message);
+    } else {
+      // Nothing about this address: the account or connection can't send
+      // right now, so this one isn't logged and goes out on resume.
+      // Stop clicked during a retry wait: redo this index so the stop check
+      // at the top of the loop ends the send as stopped, not paused.
+      if (stopRequested.has(campaign_id)) { i--; continue; }
+      const reason = error.message.slice(0, 300);
+      if (kind === 'quota') {
+        const resumeAt = calcNextResumeTime(cfg.daily_resume_time || '09:00');
+        return pause(i, 'Provider Sending Limit Reached',
+          `your SMTP provider says the sending limit is reached (${reason}). Will auto-resume at ${cfg.daily_resume_time || '09:00'} tomorrow.`, resumeAt);
+      }
+      if (kind === 'transient') {
+        const resumeAt = new Date(Date.now() + TRANSIENT_RESUME_MS).toISOString();
+        return pause(i, 'Campaign Paused — Server Unavailable',
+          `the SMTP server kept failing (${reason}). Will retry automatically in 30 minutes.`, resumeAt);
+      }
+      if (kind === 'auth') {
+        return pause(i, 'Campaign Paused — SMTP Login Failed',
+          `the SMTP server rejected the login (${reason}). Check Settings, then click Resume.`);
+      }
+      return pause(i, 'Campaign Paused — Provider Rejected Sending',
+        `your SMTP provider refused to send (${reason}). Check your account with the provider before resuming.`);
+    }
+
+    // Safety stops: a burst of failures or a high bounce rate.
+    if (failStreak >= FAILURE_STREAK_STOP) {
+      return pause(i + 1, 'Campaign Paused — Repeated Failures',
+        `${failStreak} emails in a row failed (last error: ${error.message.slice(0, 200)}). Check History, then click Resume.`);
+    }
+    const attempts = sent + failed + bounced;
+    if (attempts >= BOUNCE_STOP_MIN && bounced / attempts > BOUNCE_STOP_RATE) {
+      return pause(i + 1, 'Campaign Paused — High Bounce Rate',
+        `${bounced} of ${attempts} addresses (${(bounced / attempts * 100).toFixed(1)}%) don't exist. Sending on would hurt your sender reputation; clean the list, then click Resume.`);
     }
 
     notify();
@@ -339,7 +521,7 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
     db.addNotification(
       'campaign_done',
       'Campaign Complete',
-      `"${campaign.name}" has finished — ${start_offset + sent} emails sent out of ${total}.`,
+      `"${campaign.name}" has finished — ${start_offset + sent} emails sent out of ${total}${bounced ? `, ${bounced} bounced (marked as bounced)` : ''}.`,
       campaign_id
     );
     pushNotif();
@@ -347,7 +529,7 @@ async function runCampaign({ campaign_id, preview_to, start_offset = 0 }, mainWi
   transport.close();
   notify({ done: true });
   stopRequested.delete(campaign_id);
-  return { ok: true, sent: start_offset + sent, failed, total };
+  return { ok: true, sent: start_offset + sent, failed, bounced, total };
 }
 
 // ── Resume a paused campaign ──────────────────────────────────────────────────
@@ -356,7 +538,7 @@ async function resumeCampaign(campaign_id, mainWindow, getPort) {
   if (!campaign) return { ok: false, error: 'Campaign not found' };
   if (campaign.status !== 'paused') return { ok: false, error: 'Campaign is not paused' };
   return sendCampaign(
-    { campaign_id, start_offset: campaign.resume_offset || 0, run_key: `resume:${campaign.resume_at || 'manual'}` },
+    { campaign_id, start_offset: campaign.resume_offset || 0, resume: true, run_key: `resume:${campaign.resume_at || 'manual'}` },
     mainWindow, getPort
   );
 }

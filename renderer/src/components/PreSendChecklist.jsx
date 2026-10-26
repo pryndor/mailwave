@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle, XCircle, AlertTriangle, Send, X } from 'lucide-react'
 import { checkSpam } from '../utils/spamCheck.js'
+import { findBrokenMergeTags, withSampleValues, estimateEmailBytes, GMAIL_CLIP_BYTES } from '../utils/mergeTags.js'
 import AIReview from './AIReview.jsx'
 
 export default function PreSendChecklist({ campaign, subscriberCount, onConfirm, onCancel }) {
@@ -10,13 +11,19 @@ export default function PreSendChecklist({ campaign, subscriberCount, onConfirm,
   const [ready, setReady]     = useState(false)
 
   useEffect(() => {
-    window.api.settings.get().then(s => {
+    Promise.all([window.api.settings.get(), window.api.subscribers.customFields()]).then(([s, customKeys]) => {
       setSettings(s)
       const fromEmail = campaign.from_email || s.from_email
       const fromName  = campaign.from_name  || s.from_name
 
       const spamResult = checkSpam(campaign.subject, campaign.html, campaign.text)
       setSpam(spamResult)
+
+      // What inboxes show for a subscriber without a name, not the tags' own length.
+      const subjectLength = withSampleValues(campaign.subject || '').length
+      const brokenTags = findBrokenMergeTags(
+        [campaign.subject, campaign.ab_subject_b, campaign.preview_text, campaign.html, campaign.text], customKeys || [])
+      const emailBytes = estimateEmailBytes(campaign.html)
 
       const c = [
         {
@@ -75,8 +82,46 @@ export default function PreSendChecklist({ campaign, subscriberCount, onConfirm,
         },
         {
           label:  'Subject line length',
-          pass:   (campaign.subject?.length || 0) <= 70,
-          detail: `${campaign.subject?.length || 0} chars ${(campaign.subject?.length || 0) <= 70 ? '(Good)' : '(Too long — keep under 70)'}`,
+          pass:   subjectLength <= 70,
+          detail: `${subjectLength} chars ${subjectLength <= 70 ? '(Good)' : '(Too long — keep under 70)'}`,
+          critical: false,
+        },
+        {
+          label:  'Preview text',
+          pass:   !!campaign.preview_text?.trim(),
+          detail: campaign.preview_text?.trim()
+            ? campaign.preview_text.trim()
+            : 'Not set — inboxes will show the first words of the body instead',
+          critical: false,
+        },
+        {
+          label:  'Merge tags',
+          pass:   brokenTags.length === 0,
+          detail: brokenTags.length === 0
+            ? 'All tags will be filled in'
+            : `${brokenTags.slice(0, 3).join(', ')} will go out as written — use {{first_name}}, {{name}}, {{company}} or a CSV column`,
+          critical: false,
+        },
+        {
+          label:  'Under Gmail\'s 102 KB clip',
+          pass:   emailBytes <= GMAIL_CLIP_BYTES,
+          detail: `~${Math.ceil(emailBytes / 1024)} KB${emailBytes > GMAIL_CLIP_BYTES ? ' — Gmail will hide the rest, including the unsubscribe link. Use linked images instead of pasted ones' : ''}`,
+          critical: false,
+        },
+        {
+          label:  'Postal address',
+          pass:   !!s.postal_address?.trim(),
+          detail: s.postal_address?.trim()
+            ? 'Added to the footer'
+            : 'Not set — CAN-SPAM requires a physical address. Add it in Settings → Sender Identity',
+          critical: false,
+        },
+        {
+          label:  'Test email sent',
+          pass:   !!campaign.test_sent_at,
+          detail: campaign.test_sent_at
+            ? `Last sent ${new Date(campaign.test_sent_at.replace(' ', 'T') + 'Z').toLocaleString()}`
+            : 'Send yourself a preview first to check how it looks',
           critical: false,
         },
       ]

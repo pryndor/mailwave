@@ -67,7 +67,7 @@ export default function Subscribers() {
     toast.loading(`Importing ${result.rows.length} rows...`, { id })
     const imported = await window.api.subscribers.import(result.rows)
     toast.success(
-      `Sync done — ${imported.inserted} new, ${imported.updated} updated, ${imported.skipped} skipped (duplicates removed)`,
+      `Sync done — ${imported.inserted} new, ${imported.updated} updated, ${imported.skipped} skipped (invalid, duplicate or undeliverable)`,
       { id, duration: 6000 }
     )
     load()
@@ -360,9 +360,14 @@ function SubModal({ sub, groups, onClose, onSave }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const submit = async () => {
-    if (!form.email?.includes('@')) { toast.error('Invalid email'); return }
-    if (sub?.id) await window.api.subscribers.update(form)
-    else await window.api.subscribers.add(form)
+    const check = await window.api.subscribers.checkEmail(form.email || '')
+    if (!check.ok) { toast.error(check.error); return }
+    let email = check.email
+    if (check.suggestion && confirm(`Did you mean ${check.suggestion}?\n\nOK uses ${check.suggestion}, Cancel keeps ${email}.`)) {
+      email = check.suggestion
+    }
+    if (sub?.id) await window.api.subscribers.update({ ...form, email })
+    else await window.api.subscribers.add({ ...form, email })
     toast.success(sub ? 'Updated' : 'Subscriber added')
     onSave()
   }
@@ -399,9 +404,22 @@ function SubModal({ sub, groups, onClose, onSave }) {
   )
 }
 
+const DROP_LABELS = {
+  invalid:    'Invalid address',
+  typo:       'Misspelled domain (gmial.com…)',
+  trap:       'Spam trap address',
+  role:       'Role address (info@, support@…)',
+  disposable: 'Throwaway inbox',
+  duplicate:  'Duplicate in the file',
+  noMail:     "Domain can't receive email",
+}
+
 function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
   const [groupId, setGroupId] = useState(defaultGroupId || '')
   const [loading, setLoading] = useState(false)
+  const [clean, setClean]     = useState(true)
+  const [skipRole, setSkipRole] = useState(false)
+  const [result, setResult]   = useState(null)
   const fileRef = useRef()
 
   const handleDownloadTemplate = () => {
@@ -425,11 +443,12 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
       complete: async (result) => {
         try {
           const gid = groupId ? Number(groupId) : null
-          const res = await window.api.subscribers.import(result.data, gid)
+          const res = await window.api.subscribers.import(result.data, gid, { clean, skipRole })
           const groupName = gid ? groups.find(g => String(g.id) === String(gid))?.name : null
           const groupMsg  = groupName ? ` → added to "${groupName}"` : ''
           toast.success(`Imported: ${res.inserted} new, ${res.updated} updated, ${res.skipped} skipped${groupMsg}`)
-          onDone()
+          setLoading(false)
+          setResult(res)
         } catch (err) {
           toast.error(`Import failed: ${err?.message || err}`)
           setLoading(false)
@@ -441,6 +460,46 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
       }
     })
     e.target.value = ''
+  }
+
+  if (result) {
+    const reasons = Object.entries(result.dropped || {}).filter(([, n]) => n > 0)
+    return (
+      <div className="modal-overlay">
+        <div className="modal" style={{ maxWidth: 420 }}>
+          <h3 style={{ marginBottom: 12 }}>Import complete</h3>
+          <div style={{ fontSize: 13, display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+            <div><strong>{result.inserted}</strong> new, <strong>{result.updated}</strong> updated</div>
+            {result.suppressed > 0 && (
+              <div style={{ color: 'var(--text-dim)' }}>
+                {result.suppressed} came in as unsubscribed or bounced (from the file's status column) and won't be emailed
+              </div>
+            )}
+          </div>
+          {reasons.length > 0 && (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', fontWeight: 600, marginBottom: 6 }}>LEFT OUT ({result.skipped})</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+                {reasons.map(([reason, n]) => (
+                  <div key={reason} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 8px', background: 'var(--bg3)', borderRadius: 4 }}>
+                    <span>{DROP_LABELS[reason] || reason}</span><span>{n}</span>
+                  </div>
+                ))}
+              </div>
+              {result.examples?.length > 0 && (
+                <details style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 8 }}>
+                  <summary style={{ cursor: 'pointer' }}>Examples</summary>
+                  {result.examples.map((ex, i) => <div key={i}>{ex.email} — {DROP_LABELS[ex.reason] || ex.reason}</div>)}
+                </details>
+              )}
+            </>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" onClick={onDone}><Check size={14} /> Done</button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -473,6 +532,25 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
           </div>
         )}
 
+        <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, marginTop: 12, cursor: 'pointer' }}>
+          <input type="checkbox" checked={clean} onChange={e => setClean(e.target.checked)} style={{ marginTop: 2 }} />
+          <span>
+            Clean the list
+            <span style={{ display: 'block', color: 'var(--text-dim)' }}>
+              Leave out misspelled (gmial.com), throwaway and spam-trap addresses, and domains that can't receive email. Protects your sender reputation.
+            </span>
+          </span>
+        </label>
+        {clean && (
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, marginTop: 8, marginLeft: 22, cursor: 'pointer' }}>
+            <input type="checkbox" checked={skipRole} onChange={e => setSkipRole(e.target.checked)} />
+            Also leave out role addresses (info@, support@, sales@…)
+          </label>
+        )}
+        <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 8 }}>
+          Exports from Mailchimp, beehiiv, Substack and others keep each contact's status: unsubscribed and bounced contacts stay that way.
+        </p>
+
         {/* Hidden file input lives inside this modal — no timing issues */}
         <input
           ref={fileRef}
@@ -489,7 +567,7 @@ function ImportModal({ groups, defaultGroupId, onDone, onClose }) {
             disabled={loading}
             onClick={() => fileRef.current.click()}
           >
-            {loading ? 'Importing…' : <><Upload size={14} /> Choose File…</>}
+            {loading ? (clean ? 'Checking & importing…' : 'Importing…') : <><Upload size={14} /> Choose File…</>}
           </button>
         </div>
       </div>

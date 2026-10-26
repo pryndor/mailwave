@@ -94,6 +94,8 @@ function exportEntity(entity, onlyUid = null) {
             groups: parse(r.group_ids, []).map(id => gmap.get(id)).filter(Boolean).sort(),
             attachments: parse(r.attachments, []),
             ab_subject_b: r.ab_subject_b || '', ab_split_pct: r.ab_split_pct || 50,
+            // Only when set, so campaigns without one keep their synced hash.
+            ...(r.preview_text ? { preview_text: r.preview_text } : {}),
             created_at: r.created_at,
           }
         : {
@@ -213,18 +215,19 @@ const applyPut = {
       group_ids: JSON.stringify(groupIdsFromUids(d.groups)),
       attachments: JSON.stringify(d.attachments || []),
       ab_subject_b: d.ab_subject_b || '', ab_split_pct: d.ab_split_pct || 50,
+      preview_text: d.preview_text || '',
       created_at: d.created_at || null, uid,
     };
     const id = localIdByUid('campaigns', uid);
     if (id) {
       db.prepare(`UPDATE campaigns SET name=@name, subject=@subject, from_name=@from_name, from_email=@from_email,
         reply_to=@reply_to, html=@html, text=@text, group_ids=@group_ids, attachments=@attachments,
-        ab_subject_b=@ab_subject_b, ab_split_pct=@ab_split_pct, updated_at=datetime('now') WHERE uid=@uid`).run(vals);
+        ab_subject_b=@ab_subject_b, ab_split_pct=@ab_split_pct, preview_text=@preview_text, updated_at=datetime('now') WHERE uid=@uid`).run(vals);
     } else {
       db.prepare(`INSERT INTO campaigns (name, subject, from_name, from_email, reply_to, html, text, group_ids,
-        attachments, ab_subject_b, ab_split_pct, created_at, uid)
+        attachments, ab_subject_b, ab_split_pct, preview_text, created_at, uid)
         VALUES (@name, @subject, @from_name, @from_email, @reply_to, @html, @text, @group_ids,
-        @attachments, @ab_subject_b, @ab_split_pct, COALESCE(@created_at, datetime('now')), @uid)`).run(vals);
+        @attachments, @ab_subject_b, @ab_split_pct, @preview_text, COALESCE(@created_at, datetime('now')), @uid)`).run(vals);
     }
   },
 

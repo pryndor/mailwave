@@ -192,6 +192,7 @@ const settings   = require('./settings');
 const automation = require('./automation-server');
 const license    = require('./license');
 const teamSync   = require('./teamSync');
+const contactChecks = require('./contactChecks');
 
 // Write handlers push to the team repo a few seconds later instead of waiting
 // for the next 60s sync tick. No-op when Team Sync is off.
@@ -253,7 +254,20 @@ ipcMain.handle('subscribers:list',   (_, opts) => db.listSubscribers(opts));
 ipcMain.handle('subscribers:add',    withSync((_, sub)  => db.addSubscriber(sub)));
 ipcMain.handle('subscribers:update', withSync((_, sub)  => db.updateSubscriber(sub)));
 ipcMain.handle('subscribers:delete', withSync((_, ids)  => db.deleteSubscribers(ids)));
-ipcMain.handle('subscribers:import', withSync((_, rows, group_id) => db.importSubscribers(rows, group_id || null)));
+ipcMain.handle('subscribers:import', withSync(async (_, rows, group_id, opts = {}) => {
+  const clean = opts.clean !== false;
+  // DNS lookups run first (async); the import itself is one synchronous transaction.
+  const deadDomains = clean && opts.checkDomains !== false
+    ? await contactChecks.findDeadDomains(db.importDomains(rows))
+    : new Set();
+  return db.importSubscribers(rows, group_id || null, { clean, skipRole: !!opts.skipRole, deadDomains });
+}));
+ipcMain.handle('subscribers:checkEmail', (_, email) => {
+  const normalized = contactChecks.normalizeEmail(email);
+  if (!normalized) return { ok: false, error: 'Invalid email address' };
+  const suggestion = contactChecks.getEmailSuggestion(normalized);
+  return { ok: true, email: normalized, suggestion, reason: contactChecks.getDropReason(normalized) };
+});
 ipcMain.handle('subscribers:export', ()        => db.exportSubscribers());
 ipcMain.handle('subscribers:stats',  ()        => db.subscriberStats());
 ipcMain.handle('subscribers:customFields', ()  => db.listCustomFieldKeys());
@@ -281,6 +295,7 @@ ipcMain.handle('campaigns:smartSchedule', withSync((_, data) => {
   const smartSchedule = require('./smartSchedule');
   return smartSchedule.smartScheduleByTimezone(data, mainWindow);
 }));
+ipcMain.handle('campaigns:recipientCount', (_, group_ids) => db.getActiveSubscribersForCampaign(group_ids || []).length);
 ipcMain.handle('campaigns:previewMerge', (_, { campaign, subscriber_id }) => {
   const subs = db.getActiveSubscribersForCampaign([]);
   const sub  = subscriber_id ? subs.find(s => s.id === subscriber_id) : subs[0];

@@ -30,7 +30,8 @@ contextBridge.exposeInMainWorld('api', {
     add:    (sub)  => invoke('subscribers:add', sub),
     update: (sub)  => invoke('subscribers:update', sub),
     delete: (ids)  => invoke('subscribers:delete', ids),
-    import: (rows, group_id) => invoke('subscribers:import', rows, group_id),
+    import: (rows, group_id, opts) => invoke('subscribers:import', rows, group_id, opts),
+    checkEmail: (email) => invoke('subscribers:checkEmail', email),
     export: ()     => invoke('subscribers:export'),
     stats:  ()     => invoke('subscribers:stats'),
     customFields: () => invoke('subscribers:customFields'),
@@ -66,6 +67,7 @@ contextBridge.exposeInMainWorld('api', {
     listScheduled:          ()     => invoke('campaigns:listScheduled'),
     listScheduledDetails:   ()     => invoke('campaigns:listScheduledDetails'),
     previewMerge:           (data) => invoke('campaigns:previewMerge', data),
+    recipientCount:         (group_ids) => invoke('campaigns:recipientCount', group_ids),
     smartSchedule:          (data) => invoke('campaigns:smartSchedule', data),
   },
 

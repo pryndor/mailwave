@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path     = require('path');
 const workspace = require('./workspace');
+const contactChecks = require('./contactChecks');
 
 const dbPath = path.join(workspace.dataDir(), 'mailwave.db');
 const db = new Database(dbPath);
@@ -17,6 +18,8 @@ try { db.exec(`ALTER TABLE campaigns ADD COLUMN resume_offset  INTEGER NOT NULL 
 try { db.exec(`ALTER TABLE campaigns ADD COLUMN resume_at      TEXT`);                          } catch {}
 try { db.exec(`ALTER TABLE campaigns ADD COLUMN scheduled_at   TEXT`);                          } catch {}
 try { db.exec(`ALTER TABLE subscribers ADD COLUMN custom_fields TEXT NOT NULL DEFAULT '{}'`);   } catch {}
+try { db.exec(`ALTER TABLE campaigns ADD COLUMN preview_text   TEXT    NOT NULL DEFAULT ''`);  } catch {}
+try { db.exec(`ALTER TABLE campaigns ADD COLUMN test_sent_at   TEXT`);                          } catch {}
 
 
 // ── Schema ────────────────────────────────────────────────────────────────────
@@ -71,6 +74,8 @@ db.exec(`
     attachments   TEXT NOT NULL DEFAULT '[]',     -- JSON array of {name, path}
     ab_subject_b  TEXT NOT NULL DEFAULT '',
     ab_split_pct  INTEGER NOT NULL DEFAULT 50,
+    preview_text  TEXT NOT NULL DEFAULT '',      -- inbox preview line (preheader)
+    test_sent_at  TEXT,                          -- last successful test email, this machine only
     resume_offset INTEGER NOT NULL DEFAULT 0,
     resume_at     TEXT,
     scheduled_at  TEXT,
@@ -215,13 +220,15 @@ function deleteSubscribers(ids) {
 
 // Header names already mapped to fixed subscriber columns — anything else becomes a custom merge field.
 const KNOWN_HEADERS = new Set([
-  'email', 'e-mail', 'your email',
+  'email', 'e-mail', 'your email', 'email address',
   'name', 'your full name', 'full name',
   'first_name', 'first name', 'firstname',
   'last_name', 'last name', 'lastname',
   'phone',
   'company', 'your qualification',
+  'status', 'subscription status', 'subscriber status', 'member status', 'subscription_status', 'state',
 ]);
+const STATUS_HEADERS = ['status', 'subscription status', 'subscriber status', 'member status', 'subscription_status', 'state'];
 
 function normalizeFieldKey(header) {
   return header.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -238,28 +245,81 @@ function extractCustomFields(row) {
   return out;
 }
 
-function importSubscribers(rows, group_id = null) {
-  let inserted = 0, updated = 0, skipped = 0;
+// Exports from Mailchimp, beehiiv, Substack, Kit, MailerLite and the like
+// carry each reader's status. Someone who unsubscribed or bounced there must
+// not start getting emails here, so those statuses come across as they are.
+function importedStatus(row) {
+  const key = Object.keys(row).find(k => STATUS_HEADERS.includes(k.trim().toLowerCase()));
+  const val = key ? String(row[key] || '').trim().toLowerCase() : '';
+  if (!val) return 'active';
+  if (/bounce|cleaned|invalid|undeliverable/.test(val)) return 'bounced';
+  if (/unsub|opted.?out|inactive|complain|spam|abuse|blocked|suppressed/.test(val)) return 'unsubscribed';
+  return 'active';
+}
+
+function rowEmail(row) {
+  const key = Object.keys(row).find(k => ['email', 'e-mail', 'your email', 'email address'].includes(k.trim().toLowerCase()));
+  return key ? String(row[key] || '') : '';
+}
+
+// The addresses and domains in an import, so the caller can look up which
+// domains can't receive mail (async DNS) before the synchronous import runs.
+function importDomains(rows) {
+  const domains = new Set();
+  for (const row of rows) {
+    const email = contactChecks.normalizeEmail(rowEmail(row));
+    if (email) domains.add(email.split('@')[1]);
+  }
+  return [...domains];
+}
+
+// clean: leave out invalid, misspelled, spam-trap and throwaway addresses,
+// in-file duplicates and domains in deadDomains. skipRole: role addresses too.
+// Without clean, only addresses that aren't addresses at all are skipped.
+function importSubscribers(rows, group_id = null, { clean = true, skipRole = false, deadDomains = new Set() } = {}) {
+  let inserted = 0, updated = 0, skipped = 0, suppressed = 0;
+  const dropped = contactChecks.emptyDropped();
+  const examples = [];
   const upsert = db.prepare(`
     INSERT INTO subscribers (email, name, first_name, last_name, phone, company, status, custom_fields)
-    VALUES (@email, @name, @first_name, @last_name, @phone, @company, 'active', @custom_fields)
+    VALUES (@email, @name, @first_name, @last_name, @phone, @company, @status, @custom_fields)
     ON CONFLICT(email) DO UPDATE SET
       name       = COALESCE(NULLIF(@name,''), name),
       first_name = COALESCE(NULLIF(@first_name,''), first_name),
       last_name  = COALESCE(NULLIF(@last_name,''), last_name),
       phone      = COALESCE(NULLIF(@phone,''), phone),
       company    = COALESCE(NULLIF(@company,''), company),
+      status     = CASE WHEN @status != 'active' THEN @status ELSE status END,
       custom_fields = @custom_fields,
       updated_at = datetime('now')
   `);
   const assignStmt = group_id
     ? db.prepare('INSERT OR IGNORE INTO subscriber_groups (subscriber_id, group_id) VALUES (?, ?)')
     : null;
+  const seen = new Set();
+  const drop = (reason, raw) => {
+    dropped[reason]++;
+    skipped++;
+    if (examples.length < 20) examples.push({ email: raw, reason });
+  };
 
   const run = db.transaction(() => {
     for (const row of rows) {
-      const emailVal = (row.email || row.Email || row['Your Email'] || row['E-mail'] || row['EMAIL'] || '').toLowerCase().trim()
-      if (!emailVal || !emailVal.includes('@')) { skipped++; continue; }
+      const raw = rowEmail(row).trim();
+      const emailVal = contactChecks.normalizeEmail(raw);
+      if (!emailVal) {
+        if (raw) drop('invalid', raw); else skipped++;
+        continue;
+      }
+      if (seen.has(emailVal)) { drop('duplicate', raw); continue; }
+      seen.add(emailVal);
+      if (clean) {
+        const reason = contactChecks.getDropReason(emailVal, { skipRole })
+          || (deadDomains.has(emailVal.split('@')[1]) ? 'noMail' : null);
+        if (reason) { drop(reason, raw); continue; }
+      }
+      const status = importedStatus(row);
+      if (status !== 'active') suppressed++;
       const existing = db.prepare('SELECT id, custom_fields FROM subscribers WHERE email = ?').get(emailVal);
       const newCustom = extractCustomFields(row);
       const mergedCustom = existing
@@ -272,6 +332,7 @@ function importSubscribers(rows, group_id = null) {
         last_name:  row.last_name  || row['Last Name']  || row.LastName  || '',
         phone:      row.phone      || row.Phone      || '',
         company:    row.company    || row.Company    || row['Your Qualification'] || '',
+        status,
         custom_fields: JSON.stringify(mergedCustom),
       });
       const subId = existing ? existing.id : res.lastInsertRowid;
@@ -283,7 +344,7 @@ function importSubscribers(rows, group_id = null) {
     }
   });
   run();
-  return { inserted, updated, skipped };
+  return { inserted, updated, skipped, suppressed, dropped, examples };
 }
 
 // Distinct custom field keys across all subscribers — powers the merge-tag picker in the UI.
@@ -404,20 +465,21 @@ function saveCampaign(camp) {
     attachments:  JSON.stringify(camp.attachments || []),
     ab_subject_b: camp.ab_subject_b || '',
     ab_split_pct: camp.ab_split_pct || 50,
+    preview_text: camp.preview_text || '',
   };
   if (camp.id) {
     db.prepare(`
       UPDATE campaigns SET name=@name, subject=@subject, from_name=@from_name,
       from_email=@from_email, reply_to=@reply_to, html=@html, text=@text,
       group_ids=@group_ids, attachments=@attachments,
-      ab_subject_b=@ab_subject_b, ab_split_pct=@ab_split_pct,
+      ab_subject_b=@ab_subject_b, ab_split_pct=@ab_split_pct, preview_text=@preview_text,
       updated_at=datetime('now') WHERE id=@id
     `).run(data);
     return { id: camp.id };
   }
   const r = db.prepare(`
-    INSERT INTO campaigns (name, subject, from_name, from_email, reply_to, html, text, group_ids, attachments, ab_subject_b, ab_split_pct)
-    VALUES (@name, @subject, @from_name, @from_email, @reply_to, @html, @text, @group_ids, @attachments, @ab_subject_b, @ab_split_pct)
+    INSERT INTO campaigns (name, subject, from_name, from_email, reply_to, html, text, group_ids, attachments, ab_subject_b, ab_split_pct, preview_text)
+    VALUES (@name, @subject, @from_name, @from_email, @reply_to, @html, @text, @group_ids, @attachments, @ab_subject_b, @ab_split_pct, @preview_text)
   `).run(data);
   return { id: r.lastInsertRowid };
 }
@@ -434,6 +496,8 @@ function normalizeCampaign(c) {
     attachments:   JSON.parse(c.attachments || '[]'),
     ab_subject_b:  c.ab_subject_b  || '',
     ab_split_pct:  c.ab_split_pct  || 50,
+    preview_text:  c.preview_text  || '',
+    test_sent_at:  c.test_sent_at  || null,
     resume_offset: c.resume_offset || 0,
     resume_at:     c.resume_at     || null,
     scheduled_at:  c.scheduled_at  || null,
@@ -446,16 +510,17 @@ function duplicateCampaign(id) {
   const r = db.prepare(`
     INSERT INTO campaigns
       (name, subject, from_name, from_email, reply_to, html, text,
-       group_ids, attachments, ab_subject_b, ab_split_pct)
+       group_ids, attachments, ab_subject_b, ab_split_pct, preview_text)
     VALUES
       (@name, @subject, @from_name, @from_email, @reply_to, @html, @text,
-       @group_ids, @attachments, @ab_subject_b, @ab_split_pct)
+       @group_ids, @attachments, @ab_subject_b, @ab_split_pct, @preview_text)
   `).run({
     ...orig,
     name:        `${orig.name} (Copy)`,
     attachments: orig.attachments  || '[]',
     ab_subject_b:orig.ab_subject_b || '',
     ab_split_pct:orig.ab_split_pct || 50,
+    preview_text:orig.preview_text || '',
     id: undefined,
   });
   return { id: r.lastInsertRowid };
@@ -526,6 +591,22 @@ function getActiveSubscribersForCampaign(group_ids) {
         FROM subscribers WHERE status = 'active' ORDER BY email
       `).all();
   return rows.map(r => ({ ...r, custom_fields: JSON.parse(r.custom_fields || '{}') }));
+}
+
+// Addresses this campaign already reached on any teammate's machine — a resume skips them.
+function campaignReachedEmails(campaign_id) {
+  const rows = db.prepare(`SELECT DISTINCT lower(email) AS email FROM send_history WHERE campaign_id = ? AND status IN ('sent', 'bounced')`).all(campaign_id);
+  return new Set(rows.map(r => r.email));
+}
+
+// The SMTP server said the address doesn't exist: it's never emailed again.
+function markSubscriberBounced(id) {
+  if (!id) return;
+  db.prepare(`UPDATE subscribers SET status='bounced', updated_at=datetime('now') WHERE id=? AND status='active'`).run(id);
+}
+
+function markTestSent(campaign_id) {
+  db.prepare(`UPDATE campaigns SET test_sent_at = datetime('now') WHERE id = ?`).run(campaign_id);
 }
 
 function unsubscribeByEmail(email) {
@@ -628,13 +709,14 @@ function campaignSendSummary(campaign_id) {
 module.exports = {
   handle: db,   // raw connection for teamStore.js
   listSubscribers, addSubscriber, updateSubscriber, deleteSubscribers,
-  importSubscribers, exportSubscribers, subscriberStats, listCustomFieldKeys,
+  importSubscribers, importDomains, exportSubscribers, subscriberStats, listCustomFieldKeys,
   listGroups, addGroup, deleteGroup, assignGroup,
   listTemplates, saveTemplate, deleteTemplate,
   listCampaigns, getCampaign, saveCampaign, deleteCampaign, duplicateCampaign,
   ensureCampaignUid, campaignSentHere,
   listHistory, logSend, updateCampaignProgress,
   getActiveSubscribersForCampaign, unsubscribeByEmail,
+  campaignReachedEmails, markSubscriberBounced, markTestSent,
   // Daily limit & resume
   getTodaySentCount, updateCampaignResume, updateCampaignScheduledAt,
   getPausedCampaigns, getPausedCampaignsToResume,

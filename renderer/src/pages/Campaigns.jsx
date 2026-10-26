@@ -58,7 +58,7 @@ export default function Campaigns() {
     setEditing({
       name: `Follow-up: ${c.name}`, subject: '', from_name: c.from_name, from_email: c.from_email,
       reply_to: c.reply_to, html: '', text: '', group_ids: c.group_ids || [], attachments: [],
-      ab_subject_b: '', ab_split_pct: 50,
+      ab_subject_b: '', ab_split_pct: 50, preview_text: '',
     })
   }
 
@@ -171,7 +171,7 @@ function fmtDateTime(iso) {
 
 // ── Campaign Editor ───────────────────────────────────────────────────────────
 function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
-  const [form, setForm]       = useState(camp || { name: '', subject: '', from_name: '', from_email: '', reply_to: '', html: '', text: '', group_ids: [], attachments: [], ab_subject_b: '', ab_split_pct: 50 })
+  const [form, setForm]       = useState(camp || { name: '', subject: '', preview_text: '', from_name: '', from_email: '', reply_to: '', html: '', text: '', group_ids: [], attachments: [], ab_subject_b: '', ab_split_pct: 50 })
   const [groups, setGroups]   = useState([])
   const [templates, setTemplates] = useState([])
   const [customTags, setCustomTags] = useState([])
@@ -301,7 +301,10 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
             </p>
             <div className="form-group">
               <label>Subject</label>
-              <div style={{ padding: '8px 10px', background: 'var(--bg3)', borderRadius: 'var(--radius)', fontSize: 13 }}>{mergePreview.subject}</div>
+              <div style={{ padding: '8px 10px', background: 'var(--bg3)', borderRadius: 'var(--radius)', fontSize: 13 }}>
+                {mergePreview.subject}
+                {mergePreview.preview_text && <span style={{ color: 'var(--text-dim)' }}> — {mergePreview.preview_text}</span>}
+              </div>
             </div>
             <div className="form-group">
               <label>Body</label>
@@ -361,6 +364,17 @@ function CampaignEditor({ camp, aiStart, onSave, onCancel }) {
                 ))}
               </div>
             )}
+          </div>
+          <div className="form-group">
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>Preview Text <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>— the line inboxes show after the subject</span></span>
+              <span style={{ fontSize: 11, color: (form.preview_text || '').length > 110 ? 'var(--warning)' : 'var(--text-dim)', fontWeight: 400 }}>{(form.preview_text || '').length}/110</span>
+            </label>
+            <input className="input" value={form.preview_text || ''} onChange={e => set('preview_text', e.target.value)}
+              placeholder="e.g.  Three things we shipped this month, and one we didn't" />
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+              Merge tags take a fallback for subscribers without that field: <code style={{ color: 'var(--accent)' }}>{'{{first_name|there}}'}</code>
+            </div>
           </div>
           <div className="form-row">
             <div className="form-group"><label>From Name</label><input className="input" value={form.from_name} onChange={e => set('from_name', e.target.value)} placeholder="Your Company" /></div>
@@ -471,16 +485,17 @@ function SendPanel({ campaign, onDone }) {
   const [smartLoading, setSmartLoading] = useState(false)
   const [showChecklist, setShowChecklist] = useState(false)
   const [subCount, setSubCount]       = useState(0)
+  const [testSentAt, setTestSentAt]   = useState(campaign.test_sent_at || null)
   const cleanupRef = useRef()
 
   useEffect(() => {
     const cleanup = window.api.onSendProgress(data => {
       setProgress(data)
-      if (data.done || data.stopped) setIsSending(false)
+      if (data.done || data.stopped || data.paused) setIsSending(false)
     })
     cleanupRef.current = cleanup
-    // Load subscriber count for this campaign
-    window.api.subscribers.list({ status: 'active', limit: 1 }).then(d => setSubCount(d.total))
+    // Load subscriber count for this campaign's groups
+    window.api.campaigns.recipientCount(campaign.group_ids || []).then(setSubCount)
     return () => cleanup?.()
   }, [])
 
@@ -491,6 +506,7 @@ function SendPanel({ campaign, onDone }) {
     toast.dismiss('preview')
     if (r.ok) {
       toast.success('Preview sent! Check your inbox.')
+      setTestSentAt(new Date().toISOString().slice(0, 19).replace('T', ' '))
     } else {
       toast.error(r.error || 'Send failed', { duration: 8000 })
       console.error('Preview send error:', r.error)
@@ -549,13 +565,14 @@ function SendPanel({ campaign, onDone }) {
     toast.success(`Scheduled across ${r.buckets.length} timezone group(s)`)
   }
 
-  const pct = progress ? Math.round((progress.sent + progress.failed) / progress.total * 100) : 0
+  const handled = progress ? progress.sent + progress.failed + (progress.bounced || 0) : 0
+  const pct = progress ? Math.round(handled / progress.total * 100) : 0
 
   return (
     <div style={{ padding: 24, overflow: 'auto', flex: 1 }}>
       {showChecklist && (
         <PreSendChecklist
-          campaign={campaign}
+          campaign={{ ...campaign, test_sent_at: testSentAt }}
           subscriberCount={subCount}
           onConfirm={confirmAndSend}
           onCancel={() => setShowChecklist(false)}
@@ -668,8 +685,10 @@ function SendPanel({ campaign, onDone }) {
         {progress && (
           <div style={{ marginTop: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
-              <span>{progress.done ? 'Completed' : progress.stopped ? 'Stopped' : progress.batching ? `Batching... (waiting ${progress.batchDelay}s)` : 'Sending...'}</span>
-              <span style={{ color: 'var(--text-dim)' }}>{progress.sent + progress.failed} / {progress.total} ({pct}%)</span>
+              <span>{progress.done ? 'Completed' : progress.stopped ? 'Stopped' : progress.paused ? 'Paused'
+                : progress.retrying ? `Server busy — retrying in ${progress.retryIn}s...`
+                : progress.batching ? `Batching... (waiting ${progress.batchDelay}s)` : 'Sending...'}</span>
+              <span style={{ color: 'var(--text-dim)' }}>{handled} / {progress.total} ({pct}%)</span>
             </div>
             <div className="progress-bar-wrap">
               <div className="progress-bar" style={{ width: `${pct}%` }} />
@@ -677,8 +696,17 @@ function SendPanel({ campaign, onDone }) {
             <div style={{ display: 'flex', gap: 16, marginTop: 10, fontSize: 12 }}>
               <span style={{ color: 'var(--success)' }}>{progress.sent} sent</span>
               <span style={{ color: 'var(--danger)' }}>{progress.failed} failed</span>
+              {progress.bounced > 0 && <span style={{ color: 'var(--warning)' }}>{progress.bounced} bounced</span>}
             </div>
-            {(progress.done || progress.stopped) && (
+            {(progress.paused && progress.reason) && (
+              <div style={{ marginTop: 10, fontSize: 12, color: 'var(--warning)', background: 'rgba(245,158,11,0.06)', padding: '8px 10px', borderRadius: 'var(--radius)' }}>
+                Paused: {progress.reason}
+              </div>
+            )}
+            {(progress.retrying && progress.error) && (
+              <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>{progress.error}</div>
+            )}
+            {(progress.done || progress.stopped || progress.paused) && (
               <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={onDone}>← Back to Campaigns</button>
             )}
           </div>

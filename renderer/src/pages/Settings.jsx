@@ -66,7 +66,7 @@ export default function Settings() {
   const [form, setForm] = useState({
     smtp_host: '', smtp_port: 587, smtp_secure: false,
     smtp_user: '', smtp_pass: '',
-    from_name: '', from_email: '', reply_to: '', unsubscribe_email: '',
+    from_name: '', from_email: '', reply_to: '', unsubscribe_email: '', postal_address: '',
     batch_size: 50, batch_delay: 60, per_email_delay: 1,
     daily_send_limit: 300, daily_resume_time: '09:00', daily_limit_team_wide: false,
     notify_daily_summary: true, notify_summary_time: '08:00',
@@ -361,6 +361,11 @@ export default function Settings() {
           Every campaign includes this as a one-click List-Unsubscribe mailto link (Gmail/Outlook show it as a button). When a request comes in,
           open the subscriber in Subscribers and set their status to Unsubscribed.
         </p>
+        <div className="form-group">
+          <label>Postal Address <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>— required by CAN-SPAM, added to every campaign's footer</span></label>
+          <textarea className="input" rows={2} value={form.postal_address || ''} onChange={e => set('postal_address', e.target.value)}
+            placeholder={'Acme Inc, 123 Main St\nSpringfield, IL 62701, USA'} style={{ resize: 'vertical', fontFamily: 'inherit' }} />
+        </div>
       </section>
 
       <div className="divider" />

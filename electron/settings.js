@@ -14,6 +14,7 @@ const DEFAULTS = {
   from_email:      '',
   reply_to:        '',
   unsubscribe_email: '',
+  postal_address:  '',   // CAN-SPAM: physical address added to every campaign's footer
   license_key:       '',
   batch_size:      50,
   batch_delay:     60,

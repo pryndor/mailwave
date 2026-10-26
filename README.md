@@ -11,6 +11,11 @@ Tools like Mailchimp or Brevo charge monthly per-subscriber fees and host your l
 ## Features
 
 - Subscriber management — CSV import/export, groups, search, pagination
+- List cleaning on import: leaves out invalid, misspelled (`gmial.com`), throwaway and spam-trap addresses, in-file duplicates and domains that can't receive email (optionally role addresses like `info@`). Exports from Mailchimp, beehiiv, Substack and others keep each contact's unsubscribed/bounced status
+- Merge tags with fallbacks: `{{first_name|there}}`, and the pre-send checklist flags tags that won't be filled in
+- Preview text (inbox preheader) per campaign, and a postal address footer for CAN-SPAM
+- Pre-send checks for Gmail's 102 KB clipping, missing preview text, postal address and test email
+- Deliverability protection while sending: addresses the SMTP server rejects as non-existent are marked bounced; dropped connections and "try again later" are retried with backoff; provider quota errors pause until the next day; login or spam-policy rejections, 10 failures in a row, or a hard-bounce rate over 2% pause the campaign so you can look before it hurts your domain
 - Campaign editor (rich text) with merge fields (`{{name}}`, `{{first_name}}`, custom CSV columns)
 - Batch sending with configurable rate limiting and daily send caps
 - Scheduled sends (including timezone-aware "smart schedule")
