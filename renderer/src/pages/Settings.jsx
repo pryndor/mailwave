@@ -175,7 +175,8 @@ export default function Settings() {
         Configure any SMTP email provider. You can change this at any time.
       </p>
 
-      {/* ── License ── */}
+      {/* ── License ── hidden while paid plans are off (PAID_PLANS_ENABLED in electron/license.js) */}
+      {license?.status !== 'all-free' && (
       <section style={{ marginBottom: 24 }}>
         <h3 style={{ fontSize: 14, color: 'var(--text-h)', marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
           License
@@ -217,6 +218,7 @@ export default function Settings() {
           </div>
         )}
       </section>
+      )}
 
       <TeamSyncSettings />
 

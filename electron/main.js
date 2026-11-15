@@ -258,6 +258,9 @@ ipcMain.handle('license:deactivate', () => {
   return { ok: true };
 });
 ipcMain.handle('license:openUpgrade', () => {
+  // Paid plans are off (see PAID_PLANS_ENABLED in license.js): don't send
+  // anyone to a payment page that can't deliver a license key.
+  if (!license.PAID_PLANS_ENABLED) return { ok: false };
   shell.openExternal(UPGRADE_URL);
   return { ok: true };
 });

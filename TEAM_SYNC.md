@@ -85,7 +85,7 @@ Added 2026-09-28, so people can evaluate Team Sync safely before buying.
 - It runs **once per install**. The start date is stored in `<userData>/app-state.json`, which both workspaces share, so switching workspaces can't restart it.
 - After 7 days, syncing and send locks switch off and the app works locally as before. All data stays on the computer. Settings shows "trial ended", Upgrade and Leave team.
 - Access rule: `trial.teamAllowed()` is true with a Pro license **or** an active trial. It replaced the Pro-only check inside `teamSync.js`.
-- **Limitation:** the trial date is a local, unsigned timestamp. Deleting `app-state.json` resets it. Making it tamper-proof would need a server-issued trial token, the same way licenses are issued (possible later with the webhook on your VPS).
+- **Limitation:** the trial date is a local, unsigned timestamp. Deleting `app-state.json` resets it. Making it tamper-proof would need a server-issued trial token, the same way licenses are issued (possible later, once the license webhook is hosted again; see TODO.md). While paid plans are switched off, Team Sync is open to everyone and the trial isn't shown.
 
 ### Test workspace (`electron/workspace.js`)
 - Settings → Workspace → **Create test workspace**, with a choice of **start empty** or **start with a copy of my current data**.

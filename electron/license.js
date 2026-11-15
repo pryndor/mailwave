@@ -10,6 +10,19 @@ MCowBQYDK2VwAyEA1wfP+aRRalqP9DDzmYU24/1eUvLmOGP9aJfx8TA66Ss=
 
 const publicKey = crypto.createPublicKey(PUBLIC_KEY_PEM);
 
+// ── Paid plans switch ────────────────────────────────────────────────────────
+// false = every feature is unlocked for everyone, and the License section and
+// all "Upgrade to Pro" buttons are hidden. This is the current setting: the
+// Razorpay webhook that emailed license keys lived on the meddra-learn server,
+// which was shut down on 2026-11-15, so nothing can deliver keys to buyers.
+//
+// To turn paid plans back on:
+//   1. Host the webhook again (see payment-webhook-vps/README.md) and point the
+//      Razorpay webhook at it.
+//   2. Set this to true. Everything below (signed tokens, grace period, trial)
+//      is unchanged and starts working again as before.
+const PAID_PLANS_ENABLED = false;
+
 // Renewal payment failed or lapsed: keep Pro features working for this many
 // days past expiry rather than hard-locking a paying customer's app the
 // moment a card fails or they're a day late renewing.
@@ -49,7 +62,9 @@ function parseToken(token) {
 //   { plan: 'free' }
 //   { plan: 'free', reason: 'invalid' | 'expired', ... }
 //   { plan: 'pro', status: 'active' | 'grace', email, expires, daysLeft }
+//   { plan: 'pro', status: 'all-free' }   (PAID_PLANS_ENABLED is false)
 function getStatus(licenseKey) {
+  if (!PAID_PLANS_ENABLED) return { plan: 'pro', status: 'all-free' };
   if (!licenseKey) return { plan: 'free' };
 
   const payload = parseToken(licenseKey);
@@ -74,4 +89,4 @@ function isPro(licenseKey) {
   return getStatus(licenseKey).plan === 'pro';
 }
 
-module.exports = { getStatus, isPro };
+module.exports = { getStatus, isPro, PAID_PLANS_ENABLED };

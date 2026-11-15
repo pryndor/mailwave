@@ -1,10 +1,13 @@
 # AI features: TODO
 
-Written 2026-10-03. Last revised 2026-10-26.
+Written 2026-10-03. Last revised 2026-11-15.
 
 **Status:** phases 1–3 are built and tested (`npm test`). Writing helpers are free with the user's own
 API key; review, campaign reports and the Automation API's AI endpoints are Pro. No feature sends
 subscriber addresses, names or field values to the AI; `tests/ai.test.js` checks this.
+
+**2026-11-15:** paid plans are switched off (`PAID_PLANS_ENABLED` in `electron/license.js`), so
+the Pro features are free for everyone for now. The Pro gating code is kept unchanged. See TODO.md.
 
 Decisions taken: bring-your-own key for everyone, no hosted proxy. Default models: fast =
 `claude-haiku-5-5`, smart = `claude-sonnet-5-5`, both editable in Settings (other providers get their own

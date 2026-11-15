@@ -5,7 +5,7 @@ A desktop app for sending email newsletters through **your own SMTP account**: n
 Linux, Windows and Mac. Built with Electron and React. Licensed AGPL-3.0.
 
 - [Why MailWave](#why-mailwave)
-- [Free and Pro](#free-and-pro)
+- [Free](#free)
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Guide](#guide): [importing](#importing-subscribers) · [writing](#writing-a-campaign) · [sending safely](#sending-safely) · [scheduling](#scheduling) · [A/B tests](#ab-testing-subject-lines) · [history](#history-and-failures) · [AI](#ai-writing-and-review) · [Team Sync](#team-sync) · [Automation API](#automation-api) · [more](#more-features)
@@ -16,6 +16,13 @@ Linux, Windows and Mac. Built with Electron and React. Licensed AGPL-3.0.
 Mailchimp, Brevo and similar services charge every month by list size and keep your list on their servers. If you already pay for an email account (Zoho, Gmail, Outlook, your own mail server) or a sending service (Brevo, SendGrid, Amazon SES), MailWave sends your newsletters through it from your own computer.
 
 It's built for **lists of people who opted in**: newsletters, customer updates, announcements. It is not a cold-email tool, and it stops itself when a list looks bad.
+
+## Free
+
+Every feature is free, with no license key, trial or account.
+
+<!-- Paid plans are switched off for now (PAID_PLANS_ENABLED in electron/license.js).
+     Restore this section when they are switched back on.
 
 ## Free and Pro
 
@@ -34,6 +41,7 @@ It's built for **lists of people who opted in**: newsletters, customer updates, 
 | Website subscriber sync (FTP/SFTP) | | ✅ |
 
 Get Pro from **Settings → License → Upgrade to Pro**. The license key arrives by email; paste it into the same section. Licenses are checked offline, so Pro keeps working without internet.
+-->
 
 ## Install
 
@@ -118,7 +126,7 @@ Every email has a `List-Unsubscribe` header, which Gmail and Outlook show as an 
 
 On a campaign's send screen, click **Schedule for later** and pick a date and time. MailWave must be running at that time; it can start at login (**Settings → Startup**) and keeps running in the tray.
 
-**Smart Schedule** (Pro) sends at, say, 9:00 in each recipient's own timezone. It works out each person's timezone from, in order:
+**Smart Schedule** sends at, say, 9:00 in each recipient's own timezone. It works out each person's timezone from, in order:
 1. a `Timezone` column, using a full name such as `Asia/Kolkata`;
 2. a `Country` column (also "Country/Region", "Location" and the like; values such as "India", "IN" or "Chennai, India" all work);
 3. their email's country ending (`.in`, `.de`), which you can turn off.
@@ -135,7 +143,7 @@ Fill in **Subject B** in the editor, then choose:
 
 ### History and failures
 
-**History** lists every email sent. Pick a campaign to see why sends failed, grouped by cause (address doesn't exist, mailbox full, provider limit, login failed…), each with what to do. Pro adds an **AI campaign report**: how the campaign did compared with your previous ones, likely reasons for weak results, and next steps.
+**History** lists every email sent. Pick a campaign to see why sends failed, grouped by cause (address doesn't exist, mailbox full, provider limit, login failed…), each with what to do. There is also an **AI campaign report**: how the campaign did compared with your previous ones, likely reasons for weak results, and next steps.
 
 ### AI writing and review
 
@@ -151,21 +159,21 @@ Set your **brand voice** once (what you do, tone, words to avoid, sign-off) and 
 | Editor toolbar → **AI Write** | Continue writing from the cursor, or rewrite a selection: shorter, friendlier, fix grammar, turn into button text… |
 | Editor → **Translate** | The whole campaign in another language, keeping links and merge tags |
 | Plain Text → **Write with AI** | A clean plain-text version |
-| Editor and checklist → **AI Review** (Pro) | Spam risk, mistakes, placeholder links, compliance and claims, subject score |
-| History → **AI campaign report** (Pro) | How it did and what to do next |
+| Editor and checklist → **AI Review** | Spam risk, mistakes, placeholder links, compliance and claims, subject score |
+| History → **AI campaign report** | How it did and what to do next |
 | Subscribers → **Smart filter** | A filter from a plain-language request |
 
 AI output always appears for you to check first and can be undone.
 
 ### Team Sync
 
-Pro, with a free 7-day trial. Teammates share subscribers, groups, templates, campaigns, schedules, send history and the AI brand voice through a **private GitHub repository**, encrypted on each computer before upload, so GitHub only stores unreadable data. No server is needed. Passwords, API keys and the license are never shared. A separate **test workspace** lets you try it without touching your real data.
+Teammates share subscribers, groups, templates, campaigns, schedules, send history and the AI brand voice through a **private GitHub repository**, encrypted on each computer before upload, so GitHub only stores unreadable data. No server is needed. Passwords and API keys are never shared. A separate **test workspace** lets you try it without touching your real data.
 
 Setup and details: [TEAM_SYNC.md](TEAM_SYNC.md).
 
 ### Automation API
 
-Pro. **Settings → Automation API:** turn it on to let n8n, cron scripts or your own tools control MailWave. It only accepts requests from your own computer (`127.0.0.1`), every request needs the access token shown there, and MailWave must be running.
+**Settings → Automation API:** turn it on to let n8n, cron scripts or your own tools control MailWave. It only accepts requests from your own computer (`127.0.0.1`), every request needs the access token shown there, and MailWave must be running.
 
 ```bash
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:8787/campaigns
@@ -189,7 +197,7 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:8787/campaigns
 
 - **Templates:** save a subject and body to reuse.
 - **Brevo stats:** add a Brevo API key in Settings to see opens, clicks and bounces per campaign and your daily credits on the Dashboard (when you send through Brevo SMTP).
-- **Website subscriber sync** (Pro): pull a CSV of sign-ups from your website's server over FTP, FTPS or SFTP and import it, with the same cleaning.
+- **Website subscriber sync**: pull a CSV of sign-ups from your website's server over FTP, FTPS or SFTP and import it, with the same cleaning.
 - **Notifications:** a daily summary, reminders before scheduled sends, daily-limit and pause alerts, finished campaigns and A/B winners.
 - **Workspaces:** switch between your real data and a separate test workspace.
 
@@ -233,8 +241,8 @@ CI (`.github/workflows/build.yml`) builds all three systems and attaches them to
 | `electron/` | Main process: database (`db.js`), sending (`mailer.js`), AI (`ai*.js`), Team Sync, Automation API, Smart Schedule |
 | `renderer/` | The interface (React + Vite) |
 | `tests/` | Test suite (`node:test`) |
-| `license-tooling/` | Scripts to make the signing key pair and issue Pro licenses |
-| `payment-webhook-vps/` | Server that issues a license when a Razorpay payment arrives |
+| `license-tooling/` | Scripts to make the signing key pair and issue Pro licenses (paid plans are off for now) |
+| `payment-webhook-vps/` | Server that issues a license when a Razorpay payment arrives (not deployed right now) |
 
 ## License and credits
 
