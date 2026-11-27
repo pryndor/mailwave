@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { LayoutDashboard, Users, Mail, FileText, Clock, Settings, Send, Bell, Megaphone } from 'lucide-react'
 
 const nav = [
@@ -11,6 +12,8 @@ const nav = [
 ]
 
 export default function Sidebar({ current, onNavigate, unreadCount = 0, onToggleNotifications }) {
+  const [version, setVersion] = useState('')
+  useEffect(() => { window.api.appVersion().then(setVersion) }, [])
   return (
     <aside style={{
       width: 220, background: 'var(--bg2)', borderRight: '1px solid var(--border)',
@@ -76,7 +79,7 @@ export default function Sidebar({ current, onNavigate, unreadCount = 0, onToggle
 
       {/* Footer */}
       <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', color: 'var(--text-dim)', fontSize: 11 }}>
-        v1.0.0 · Local App
+        {version ? `v${version} · ` : ''}Local App
       </div>
     </aside>
   )

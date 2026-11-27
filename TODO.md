@@ -9,6 +9,10 @@ Last revised 2026-11-27. Everything open, in priority order. Detailed lists:
   `electron/license.js`. The License section and "Upgrade to Pro" buttons are hidden, and
   `isPro()` returns true for everyone. Reason: the server that ran the Razorpay webhook (which emailed
   license keys) was shut down on 2026-11-15, so nothing can deliver a key right now.
+- **Update check (2026-11-27).** Daily check of GitHub's latest release, notification + banner
+  once per new version, Settings → Updates with Check now. Notify only (`electron/updates.js`).
+  Later option: real auto-install with `electron-updater` (needs `latest*.yml` files in releases
+  and, on Mac/Windows, code signing).
 - **Social posting started (2026-11-27).** Social page, scheduling, AI writer and LinkedIn
   (personal profile) are built and tested against a fake LinkedIn API. Code: `electron/social/`,
   `renderer/src/pages/Social.jsx`, tests in `tests/social.test.js`.
@@ -57,7 +61,9 @@ Next, in order:
 
 - [ ] Live-test LinkedIn (above), then bump `package.json` version (now 1.2.0): "all features
   free, social posting (LinkedIn)".
-- [ ] Tag `v*` so `.github/workflows/build.yml` builds Linux, Windows and Mac.
+- [ ] Tag `v*` so `.github/workflows/build.yml` builds Linux, Windows and Mac, then **publish**
+  the draft release with notes. Installed apps (1.3.0 and later) see it within a day through the
+  update check; drafts and pre-releases are never announced.
 - [ ] Click through the built app: no License section; Smart Schedule, AI review and reports,
   Team Sync, Automation API, FTP/SFTP sync and Social all work without a key.
 

@@ -34,6 +34,10 @@ export default function App() {
   const [workspace, setWorkspace] = useState('main')
   useEffect(() => { window.api.workspace.info().then(w => setWorkspace(w.current)) }, [])
 
+  // A newer release was found by the daily update check (electron/updates.js)
+  const [update, setUpdate] = useState(null)
+  useEffect(() => window.api.onUpdateAvailable(setUpdate), [])
+
   const handleMarkRead = () => setUnreadCount(0)
 
   const pages = {
@@ -64,6 +68,13 @@ export default function App() {
           <div style={{ background: 'rgba(224,160,32,0.12)', borderBottom: '1px solid rgba(224,160,32,0.35)', color: '#e0a020', fontSize: 12, padding: '6px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span><strong>Test workspace</strong>: separate data, emails sent here are still real</span>
             <button className="btn btn-ghost btn-sm" onClick={() => setPage('settings')}>Switch back in Settings</button>
+          </div>
+        )}
+        {update && (
+          <div style={{ background: 'var(--accent-bg)', borderBottom: '1px solid var(--border)', fontSize: 12, padding: '6px 16px', display: 'flex', gap: 10, alignItems: 'center' }}>
+            <span style={{ flex: 1 }}><strong>MailWave {update.latest}</strong> is available (you have {update.current}).</span>
+            <button className="btn btn-primary btn-sm" onClick={() => window.api.updates.open(update.url)}>Download</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setUpdate(null)}>Later</button>
           </div>
         )}
         {pages[page] || pages.dashboard}

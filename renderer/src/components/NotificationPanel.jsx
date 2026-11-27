@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { X, Bell, CheckCheck, AlertTriangle, CheckCircle, Clock, Zap, Info } from 'lucide-react'
+import { X, Bell, CheckCheck, AlertTriangle, CheckCircle, Clock, Zap, Info, Download, Megaphone } from 'lucide-react'
 
 const TYPE_META = {
   limit_reached:     { icon: AlertTriangle, color: 'var(--warning)',  label: 'Limit Reached'  },
@@ -9,6 +9,8 @@ const TYPE_META = {
   daily_summary:     { icon: Info,          color: 'var(--accent)',   label: 'Daily Summary'  },
   campaign_reminder: { icon: Clock,         color: 'var(--warning)',  label: 'Reminder'       },
   ab_winner:         { icon: CheckCircle,   color: 'var(--accent)',   label: 'A/B Winner'     },
+  update_available:  { icon: Download,      color: 'var(--accent)',   label: 'Update'         },
+  social:            { icon: Megaphone,     color: 'var(--warning)',  label: 'Social'         },
 }
 
 function timeAgo(iso) {

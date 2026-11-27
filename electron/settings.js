@@ -61,6 +61,10 @@ const DEFAULTS = {
   // are sealed and, like ai_*, never sent to the Settings form.
   social_linkedin_client_id:     '',
   social_linkedin_client_secret: '',
+  // Update check (electron/updates.js)
+  update_auto_check:       true,
+  update_last_check:       '',
+  update_notified_version: '',
 };
 
 function getAll() {

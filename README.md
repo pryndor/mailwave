@@ -224,6 +224,7 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:8787/campaigns
 - **Website subscriber sync**: pull a CSV of sign-ups from your website's server over FTP, FTPS or SFTP and import it, with the same cleaning.
 - **Notifications:** a daily summary, reminders before scheduled sends, daily-limit and pause alerts, finished campaigns and A/B winners.
 - **Workspaces:** switch between your real data and a separate test workspace.
+- **Update check:** once a day MailWave asks GitHub whether a newer version is out, and tells you with a notification and a banner. **Settings → Updates** shows your version, has **Check now**, and lets you turn automatic checks off. It only notifies; you download and install the new version yourself.
 
 ## Privacy
 
@@ -231,6 +232,7 @@ Your data lives in a local database on your computer. Nothing is uploaded except
 - the emails you send, through your own SMTP provider;
 - social posts you publish, sent straight to that platform's API with your own sign-in;
 - Team Sync data, end-to-end encrypted, to your team's private GitHub repo, if you use it;
+- the daily update check, a request to GitHub asking for the newest version number (turn it off in Settings → Updates);
 - calls to your AI provider, if you turn AI on. These contain only the text you write, the campaign's content, field, group and campaign names, column headers with what their values look like, and counts. Subscriber addresses, names and field values are never sent, and the test suite checks this.
 
 API keys, social sign-in tokens and app secrets are stored encrypted with your system's keychain where available, and never reach the app's interface. AI call metadata (feature, model, tokens, time) is logged locally, never the content.
@@ -257,7 +259,7 @@ npm run build:mac    # dmg + zip (on macOS)
 
 The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, social posting against a fake LinkedIn API (including the sign-in callback), and the AI features against a fake provider.
 
-CI (`.github/workflows/build.yml`) builds all three systems and attaches them to a draft GitHub Release when you push a `v*` tag.
+CI (`.github/workflows/build.yml`) builds all three systems and attaches them to a draft GitHub Release when you push a `v*` tag. Users' apps are told about the release once you **publish** the draft (drafts and pre-releases are never announced).
 
 **Project layout**
 

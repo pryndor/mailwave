@@ -150,7 +150,10 @@ function startScheduler() {
         if (firedReminders.size > 500) firedReminders.clear();
       }
 
-      // 4. ── Scheduled social posts ─────────────────────────────────────────
+      // 4. ── Daily update check (notifies once per new version) ──────────────
+      updates.autoCheck().catch(err => console.error('[Updates]', err.message));
+
+      // 5. ── Scheduled social posts ─────────────────────────────────────────
       social.deps.notify = (title, body) => pushUI('social', title, body, null);
       const posted = await social.runDue(now);
       if (posted.length && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('social:changed', {});
@@ -172,6 +175,17 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   social.init();
+  updates.deps.currentVersion = () => app.getVersion();
+  updates.deps.onAvailable = (info) => {
+    db.addNotification('update_available', 'Update available', `MailWave ${info.latest} is out (you have ${info.current}). Open Settings → Updates to download it.`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('notification:new', {});
+      mainWindow.webContents.send('update:available', info);
+    }
+    require('./notifications').sendNative('MailWave — Update available', `Version ${info.latest} is ready to download.`);
+  };
+  // First check shortly after start, so it doesn't slow the launch.
+  setTimeout(() => updates.autoCheck().catch(() => {}), 30 * 1000);
   startScheduler();
   rearmScheduledCampaigns();
   automation.start({ settings, db, mailer, mainWindow });
@@ -207,6 +221,7 @@ const license    = require('./license');
 const teamSync   = require('./teamSync');
 const contactChecks = require('./contactChecks');
 const social        = require('./social');
+const updates       = require('./updates');
 
 // Write handlers push to the team repo a few seconds later instead of waiting
 // for the next 60s sync tick. No-op when Team Sync is off.
@@ -254,7 +269,7 @@ ipcMain.handle('startup:set', (_, enabled) => {
 // (ai:* handlers), automation_* keys to the Automation API section
 // (automation:* handlers) and social_* keys to the Social page (social:* handlers): secrets never reach the Settings form, and its stale
 // copy can't overwrite them.
-const OWN_SECTIONS = ['team_', 'ai_', 'automation_', 'social_'];
+const OWN_SECTIONS = ['team_', 'ai_', 'automation_', 'social_', 'update_'];
 const withoutSecretKeys = (obj) => Object.fromEntries(Object.entries(obj || {}).filter(([k]) => !OWN_SECTIONS.some(p => k.startsWith(p))));
 ipcMain.handle('settings:get',    () => withoutSecretKeys(settings.getAll()));
 ipcMain.handle('settings:save',   (_, data) => settings.save(withoutSecretKeys(data)));
@@ -491,3 +506,10 @@ ipcMain.handle('social:pickImage',     socialCall(async () => {
   const r = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif'] }] });
   return { ok: !r.canceled, path: r.filePaths?.[0] || '' };
 }));
+
+// Update check (electron/updates.js): notify only, the user installs.
+ipcMain.handle('update:status',  () => updates.status());
+ipcMain.handle('update:check',   async () => { const r = await updates.check(); return { ...updates.status(), result: r }; });
+ipcMain.handle('update:setAuto', (_, enabled) => updates.setAuto(enabled));
+ipcMain.handle('update:open',    (_, url) => { shell.openExternal(updates.safeReleaseUrl(url)); return { ok: true }; });
+ipcMain.handle('app:version',    () => app.getVersion());

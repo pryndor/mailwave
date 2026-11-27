@@ -158,6 +158,15 @@ contextBridge.exposeInMainWorld('api', {
     socialPost: (opts) => invoke('ai:socialPost', opts),
   },
 
+  // Update check (GitHub releases)
+  updates: {
+    status:  ()        => invoke('update:status'),
+    check:   ()        => invoke('update:check'),
+    setAuto: (enabled) => invoke('update:setAuto', enabled),
+    open:    (url)     => invoke('update:open', url),
+  },
+  appVersion: () => invoke('app:version'),
+
   // Social posting (tokens stay in the main process)
   social: {
     config:        ()         => invoke('social:config'),
@@ -195,6 +204,13 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('social:changed', handler);
     return () => ipcRenderer.removeListener('social:changed', handler);
+  },
+
+  // A newer MailWave release was found by the daily check
+  onUpdateAvailable: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('update:available', handler);
+    return () => ipcRenderer.removeListener('update:available', handler);
   },
 
   // Notification bell — fires whenever a new notification is created
