@@ -1,51 +1,67 @@
 # MailWave: TODO
 
-Last revised 2026-11-15. This is the overview. The detailed lists are in
+Last revised 2026-11-27. Everything open, in priority order. Detailed lists:
 [AI_TODO.md](AI_TODO.md) (AI features) and [TEAM_SYNC.md](TEAM_SYNC.md) ("Not done yet").
 
 ## Current state
 
 - **Every feature is free.** Paid plans are switched off with `PAID_PLANS_ENABLED = false` in
-  `electron/license.js`. The License section and all "Upgrade to Pro" buttons are hidden, and
-  `isPro()` returns true for everyone.
-- **Why:** the Razorpay webhook that emailed license keys ran on the meddra-learn server,
-  which was deleted on 2026-11-15. Nothing can deliver a key to a buyer right now.
-- The signing key is safe at `license-tooling/private_key.pem` (gitignored, local only).
-  Licenses already issued still verify offline.
+  `electron/license.js`. The License section and "Upgrade to Pro" buttons are hidden, and
+  `isPro()` returns true for everyone. Reason: the server that ran the Razorpay webhook (which emailed
+  license keys) was shut down on 2026-11-15, so nothing can deliver a key right now.
+- **Social posting started (2026-11-27).** Social page, scheduling, AI writer and LinkedIn
+  (personal profile) are built and tested against a fake LinkedIn API. Code: `electron/social/`,
+  `renderer/src/pages/Social.jsx`, tests in `tests/social.test.js`.
 
-## 1. Urgent (outside the code)
+## P0. Urgent: do these yourself, in Razorpay and on your computer
 
-- [ ] **Razorpay dashboard:** deactivate the payment link `https://rzp.io/rzp/hz68qyl` (older
-  builds of the app still open it) and remove the webhook that pointed at
-  `meddra-learn.drugvigil.com/mailwave/razorpay-webhook`.
-- [ ] Check Razorpay for any MailWave payments or renewals since 2026-11-15, and for active
-  subscriptions. Issue those buyers keys by hand
-  (`node license-tooling/generate-license.js buyer@email.com 1`) or cancel and refund.
-- [ ] Back up `license-tooling/private_key.pem` somewhere safe outside this computer
-  (password manager or encrypted drive). The server copy is gone, so this is the only one.
+- [ ] **Razorpay dashboard:** deactivate the old payment link (older builds of the app still
+  open it; see `UPGRADE_URL` in `electron/main.js`) and remove the webhook that pointed at the
+  old server.
+- [ ] **Check Razorpay for payments since 2026-11-15** and for active subscriptions. Send those
+  buyers keys by hand (`node license-tooling/generate-license.js buyer@email.com 1`) or refund.
+- [ ] **Back up `license-tooling/private_key.pem`** somewhere outside this computer (password
+  manager or encrypted drive). It's the only copy: if this disk dies, no new license keys.
 
-## 2. Release (free version)
+## P1. Social marketing (in progress, one platform at a time)
 
-- [ ] Bump the version in `package.json` (currently 1.2.0) and note "all features free".
-- [ ] Push and tag `v*` so `.github/workflows/build.yml` builds Linux, Windows and Mac.
-- [ ] Click through the built app once: Settings shows no License section, and Smart Schedule,
-  AI review, AI reports, Team Sync, Automation API and FTP/SFTP sync all work without a key.
+Done:
+- [x] Base: Social page (posts list, composer, accounts), posts and accounts in SQLite, tokens
+  sealed in the OS keychain, schedule that survives restarts (missed if >6 h late), per-account
+  status, retry only where missing, never auto-retry a post interrupted mid-publish.
+- [x] AI writer: posts from a brief, adapt main text per platform, email campaign → posts.
+- [x] **LinkedIn** personal profile: OAuth sign-in through the user's own developer app, text,
+  one image or link card, 60-day token expiry warning.
 
-## 3. Turning paid plans back on (later)
+Next, in order:
+- [ ] **Live test LinkedIn** with a real developer app (only tested against a fake API so far).
+  Check: sign-in, text post, image post, link card, parentheses/@ in text, `LinkedIn-Version`
+  header `202610` still accepted (bump yearly in `electron/social/linkedin.js`).
+- [ ] **Facebook Pages + Instagram Business** (one Meta app, Graph API). Page token from user
+  token; Instagram needs an image or video and a Business account linked to the Page. Publishing
+  for other people's Pages needs Meta App Review (`pages_manage_posts`,
+  `instagram_content_publish`); app admins can post to their own Pages in development mode.
+- [ ] **X (Twitter)**: OAuth 2.0 with PKCE, `tweet.write users.read offline.access`, refresh
+  tokens. Check current API pricing/limits for posting before building.
+- [ ] **Bluesky** (app password, no developer app) and **Mastodon** (access token per server).
+- [ ] **Threads** (Meta, reuses the Meta app).
+- [ ] **Google Business Profile** (local businesses: posts, offers, events). API access needs a
+  Google request form approval.
+- [ ] **Pinterest**, then TikTok and YouTube (video-first, later).
+- [ ] LinkedIn **Company Pages** (Community Management API, needs LinkedIn review).
+- [ ] Features: multiple images, video, first comment, calendar view, post analytics (likes,
+  comments, reach) where APIs allow, reusable post templates, hashtag sets, Team Sync for social
+  posts (accounts stay per device), Automation API endpoints for social posts.
 
-1. Host the webhook again. Choose one:
-   - `payment-webhook-vps/` (ready-made Node service) on another server, such as the box
-     that runs ncloud.drugvigil.com;
-   - or port `payment-webhook-vps/server.js` to a serverless function (Cloudflare Workers,
-     Vercel), with the private key stored as a secret.
-2. Point a Razorpay webhook at it (`subscription.activated` + `subscription.charged`) and
-   send a test event.
-3. Set `PAID_PLANS_ENABLED = true` in `electron/license.js`, restore the "Free and Pro"
-   section in README.md (it's kept in an HTML comment) and ship a release.
-4. Optional: a server-issued trial token, so the Team Sync trial can't be reset
-   (TEAM_SYNC.md gap 11).
+## P2. Release (free version)
 
-## 4. AI features (details in AI_TODO.md)
+- [ ] Live-test LinkedIn (above), then bump `package.json` version (now 1.2.0): "all features
+  free, social posting (LinkedIn)".
+- [ ] Tag `v*` so `.github/workflows/build.yml` builds Linux, Windows and Mac.
+- [ ] Click through the built app: no License section; Smart Schedule, AI review and reports,
+  Team Sync, Automation API, FTP/SFTP sync and Social all work without a key.
+
+## P3. AI features (details in AI_TODO.md)
 
 1. Test with Ollama offline and with no key.
 2. Streaming, so long drafts appear as they're written.
@@ -57,10 +73,20 @@ Last revised 2026-11-15. This is the overview. The detailed lists are in
 8. Later or blocked: template generator (needs an HTML template mode), engagement scoring and
    send-time advice (need per-subscriber open data), personalised lines (need the privacy toggle).
 
-## 5. Team Sync (details in TEAM_SYNC.md)
+## P4. Team Sync (details in TEAM_SYNC.md)
 
 1. Live test against real github.com with two profiles.
 2. "Sign in with GitHub" button: register an OAuth App and set `GITHUB_CLIENT_ID`.
 3. Compaction / snapshots of event files.
 4. Encrypted attachment upload.
 5. Remote stop, live refresh on editing pages, passphrase rotation, roles, per-field merge.
+
+## P5. Turning paid plans back on (later)
+
+1. Host the webhook again: `payment-webhook-vps/` on another server, or
+   port `server.js` to a serverless function with the private key as a secret.
+2. Point a Razorpay webhook at it (`subscription.activated` + `subscription.charged`), send a
+   test event.
+3. Set `PAID_PLANS_ENABLED = true`, restore the "Free and Pro" section in README.md (kept in an
+   HTML comment), decide which social features are Pro, ship a release.
+4. Optional: server-issued trial token so the Team Sync trial can't be reset (TEAM_SYNC.md gap 11).

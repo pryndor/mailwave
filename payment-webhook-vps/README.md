@@ -1,4 +1,4 @@
-# MailWave Pro webhook — Hetzner VPS version
+# MailWave Pro webhook — VPS version
 
 Razorpay calls this on every successful subscription charge. It verifies the
 request is genuinely from Razorpay, signs a license token with the private key
@@ -6,9 +6,8 @@ from `license-tooling/`, and emails it to the buyer through your SMTP account.
 It runs as a standalone `server.js` process behind Apache. No database: fully
 stateless.
 
-Meant for the same Hetzner box already running `ncloud.drugvigil.com`
-(Apache, certbot-managed TLS — see the Nextcloud/LibreSign setup notes),
-on a new subdomain, e.g. `webhook.drugvigil.com`.
+Meant for any Linux VPS running Apache with certbot-managed TLS,
+on its own subdomain, e.g. `webhook.example.com`.
 
 ## Setup
 
@@ -54,8 +53,6 @@ to watch it process in real time, and confirm the test email arrives.
 
 ## If you'd rather not stand up yet another deployment
 
-You mentioned a second Hetzner instance that already has a working
-Razorpay integration from another project — if that app already has a
-proven webhook-receiving setup, it's very likely less work to add one more
-route to that existing, already-working server than to finish standing up
-this one from scratch. Worth checking before deploying this.
+If you already run a server with a working Razorpay webhook for another
+project, adding one more route there is likely less work than standing up
+this service from scratch.

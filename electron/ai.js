@@ -675,6 +675,46 @@ async function testConnection() {
   }
 }
 
+// Social posts, one per platform. Three starting points:
+//   brief       → write fresh posts from a short description
+//   text        → adapt a post the user already wrote to each platform
+//   campaign_id → turn an email campaign into posts promoting it
+async function socialPost({ brief = '', text = '', campaign_id = null, link = '', platforms = [] } = {}) {
+  const wanted = [...new Set(platforms)].filter(p => P.SOCIAL_PLATFORM_GUIDE[p]);
+  if (!wanted.length) throw new AiError('Choose at least one account to write for.', 'input');
+
+  let source;
+  if (campaign_id) {
+    const camp = db.getCampaign(campaign_id);
+    if (!camp) throw new AiError('Campaign not found.', 'input');
+    source = `Turn this email newsletter into social posts that promote it and make people want to read or act on it. Keep the key facts; don't copy the email word for word, and leave out greetings, sign-offs and merge tags like {{first_name}}.\n\n<email>\nSubject: ${camp.subject}\n${stripHtml(camp.html).slice(0, 8000)}\n</email>`;
+  } else if (text.trim()) {
+    source = `Adapt this post to each platform. Keep its meaning, facts and voice; change length, structure and hashtags to suit the platform.\n\n<post>\n${text.trim().slice(0, 6000)}\n</post>`;
+  } else if (brief.trim()) {
+    source = `Write a post about this:\n\n<brief>\n${brief.trim().slice(0, 4000)}\n</brief>`;
+  } else {
+    throw new AiError('Describe what the post is about, or write a draft first.', 'input');
+  }
+
+  const user =
+    `${source}\n\n` +
+    (link.trim() ? `The post links to ${link.trim()}. The link is attached separately on LinkedIn and Facebook, so don't paste it into those posts; include it in the text for other platforms.\n\n` : '') +
+    `Write one version for each of these platforms, following its guide:\n` +
+    wanted.map(p => `- ${p}: ${P.SOCIAL_PLATFORM_GUIDE[p]}`).join('\n');
+
+  const out = await complete({
+    feature: 'social', tier: 'smart', effort: 'medium', maxTokens: 8000,
+    system: P.socialSystem(settings.getAll()),
+    user, schema: P.SOCIAL_SCHEMA,
+  });
+  const variants = {};
+  for (const post of out.posts || []) {
+    if (wanted.includes(post.platform) && post.text?.trim()) variants[post.platform] = post.text.trim();
+  }
+  if (!Object.keys(variants).length) throw new AiError('The AI returned no posts. Try again.', 'empty');
+  return { ok: true, variants };
+}
+
 // ── Mock provider (dev / demo, no key) ────────────────────────────────────────
 function mockResponse(feature) {
   db.logAiCall({ feature, model: 'mock' });
@@ -686,6 +726,9 @@ function mockResponse(feature) {
     notes: 'Mock output. Replace [link] before sending.',
   };
   switch (feature) {
+    case 'social': return { posts: [
+      { platform: 'linkedin', text: 'This is a mock LinkedIn post.\n\nSwitch the AI provider in Settings to get real output.\n\n#MailWave #SmallBusiness' },
+    ] };
     case 'subjects': return { options: [
       { subject: 'Your {{first_name}} update is here', reason: 'Personal and direct' },
       { subject: 'Three things worth knowing this week', reason: 'Clear, scannable promise' },
@@ -737,6 +780,6 @@ const handler = (fn) => async (_, arg) => {
 
 module.exports = {
   draft, followUp, reply, subjects, rewrite, review,
-  previewText, plainText, translate, sequence, report, subscriberFilter, mapColumns, continueWriting,
+  previewText, plainText, translate, sequence, report, subscriberFilter, mapColumns, continueWriting, socialPost,
   getConfig, saveConfig, listModels, testConnection, handler, AiError
 };

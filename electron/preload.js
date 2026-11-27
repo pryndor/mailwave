@@ -155,6 +155,24 @@ contextBridge.exposeInMainWorld('api', {
     subscriberFilter: (opts) => invoke('ai:subscriberFilter', opts),
     mapColumns: (opts) => invoke('ai:mapColumns', opts),
     continueWriting: (opts) => invoke('ai:continue', opts),
+    socialPost: (opts) => invoke('ai:socialPost', opts),
+  },
+
+  // Social posting (tokens stay in the main process)
+  social: {
+    config:        ()         => invoke('social:config'),
+    saveAppConfig: (data)     => invoke('social:saveAppConfig', data),
+    connect:       (platform) => invoke('social:connect', platform),
+    cancelConnect: ()         => invoke('social:cancelConnect'),
+    accounts:      ()         => invoke('social:accounts'),
+    disconnect:    (id)       => invoke('social:disconnect', id),
+    posts:         ()         => invoke('social:posts'),
+    save:          (post)     => invoke('social:save', post),
+    delete:        (id)       => invoke('social:delete', id),
+    publishNow:    (id)       => invoke('social:publishNow', id),
+    schedule:      (data)     => invoke('social:schedule', data),
+    unschedule:    (id)       => invoke('social:unschedule', id),
+    pickImage:     ()         => invoke('social:pickImage'),
   },
 
   // ── IPC event listeners ────────────────────────────────────────────────────
@@ -170,6 +188,13 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('team:changed', handler);
     return () => ipcRenderer.removeListener('team:changed', handler);
+  },
+
+  // A scheduled social post was published (or failed) in the background
+  onSocialChanged: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('social:changed', handler);
+    return () => ipcRenderer.removeListener('social:changed', handler);
   },
 
   // Notification bell — fires whenever a new notification is created

@@ -284,6 +284,48 @@ const CONTINUE_SCHEMA = {
   additionalProperties: false,
 };
 
+// Social posts: one draft adapted to each platform's norms.
+const SOCIAL_PLATFORM_GUIDE = {
+  linkedin:  'LinkedIn (max 3000 characters): professional but human. Strong first line (only ~200 characters show before "see more"), short paragraphs with blank lines between them, a clear takeaway or question at the end, 3-5 relevant hashtags at the very end. No emoji walls.',
+  facebook:  'Facebook Page (keep under 500 characters): conversational and friendly, a question or clear call to action, 0-2 hashtags.',
+  instagram: 'Instagram caption (max 2200 characters): hook in the first line, short lines, a call to action (links in captions are not clickable, so say "link in bio" if a link matters), up to 10 relevant hashtags at the end.',
+  x:         'X/Twitter (max 280 characters including any link, which counts as 23): punchy, one idea, 0-2 hashtags.',
+  bluesky:   'Bluesky (max 300 characters): casual and direct, no hashtag stuffing.',
+  threads:   'Threads (max 500 characters): conversational, like talking to followers, 0-1 hashtag.',
+  mastodon:  'Mastodon (max 500 characters): plain and genuine, hashtags in CamelCase for accessibility.',
+};
+
+function socialSystem(cfg) {
+  return `You write social media posts for small businesses using MailWave to promote their business, events and activities. Posts read like a real person at the company wrote them: specific, useful, never hypey or spammy.
+
+${brandVoice(cfg)}
+
+Rules:
+- Plain text only: no HTML or Markdown (no **bold**, no # headings). Line breaks are fine.
+- Never invent facts, prices, dates, statistics, names or links. Where a needed detail wasn't given, write a clear placeholder in square brackets, like [event date] or [link].
+- Respect each platform's character limit strictly.`;
+}
+
+const SOCIAL_SCHEMA = {
+  type: 'object',
+  properties: {
+    posts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          platform: { type: 'string' },
+          text:     { type: 'string', description: 'The finished post text for this platform' },
+        },
+        required: ['platform', 'text'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['posts'],
+  additionalProperties: false,
+};
+
 function analystSystem() {
   return `You analyse the results of email campaigns sent with MailWave, a desktop bulk-email app that sends through the user's own SMTP account. Write for a small-business owner, not a marketer: plain words, short sentences, numbers from the data.
 
@@ -300,4 +342,5 @@ module.exports = {
   EMAIL_SCHEMA, SUBJECTS_SCHEMA, REWRITE_SCHEMA, REVIEW_SCHEMA,
   PREVIEW_TEXT_SCHEMA, TRANSLATION_SCHEMA, SEQUENCE_SCHEMA, REPORT_SCHEMA,
   FILTER_SCHEMA, COLUMN_MAP_SCHEMA, CONTINUE_SCHEMA, IMPORT_TARGETS,
+  socialSystem, SOCIAL_SCHEMA, SOCIAL_PLATFORM_GUIDE,
 };

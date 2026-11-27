@@ -137,3 +137,17 @@ test('turned off or empty input gives a clear error, not a call', async () => {
   await assert.rejects(ai.translate({ language: '', html: '<p>x</p>' }), /Choose the language/);
   assert.equal(calls.length, n);
 });
+
+test('social posts: one version per chosen platform, unknown platforms dropped', async () => {
+  reply = { s: on('Write one version for each', { posts: [
+    { platform: 'linkedin', text: ' Health camp on Saturday. #health ' },
+    { platform: 'myspace', text: 'nope' },
+  ] }) };
+  const r = await ai.socialPost({ brief: 'Free health camp Saturday', platforms: ['linkedin', 'myspace'] });
+  assert.deepEqual(r.variants, { linkedin: 'Health camp on Saturday. #health' });
+  assert.match(lastCall().user, /linkedin: LinkedIn \(max 3000/);
+  assert.doesNotMatch(lastCall().user, /myspace/);
+  assert.match(lastCall().system, /Plain text only/);
+  await assert.rejects(ai.socialPost({ platforms: ['linkedin'] }), /Describe what the post is about/);
+  await assert.rejects(ai.socialPost({ brief: 'x', platforms: [] }), /at least one account/);
+});

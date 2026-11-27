@@ -13,8 +13,8 @@ const publicKey = crypto.createPublicKey(PUBLIC_KEY_PEM);
 // ── Paid plans switch ────────────────────────────────────────────────────────
 // false = every feature is unlocked for everyone, and the License section and
 // all "Upgrade to Pro" buttons are hidden. This is the current setting: the
-// Razorpay webhook that emailed license keys lived on the meddra-learn server,
-// which was shut down on 2026-11-15, so nothing can deliver keys to buyers.
+// Razorpay webhook that emailed license keys lived on a server
+// that was shut down on 2026-11-15, so nothing can deliver keys to buyers.
 //
 // To turn paid plans back on:
 //   1. Host the webhook again (see payment-webhook-vps/README.md) and point the

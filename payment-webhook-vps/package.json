@@ -2,7 +2,7 @@
   "name": "mailwave-license-webhook-vps",
   "version": "1.0.0",
   "private": true,
-  "description": "Razorpay webhook -> MailWave Pro license issuance, standalone service for the Hetzner VPS (behind Apache reverse proxy).",
+  "description": "Razorpay webhook -> MailWave Pro license issuance, standalone service for a VPS (behind Apache reverse proxy).",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

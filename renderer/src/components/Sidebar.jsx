@@ -1,10 +1,11 @@
-import { LayoutDashboard, Users, Mail, FileText, Clock, Settings, Send, Bell } from 'lucide-react'
+import { LayoutDashboard, Users, Mail, FileText, Clock, Settings, Send, Bell, Megaphone } from 'lucide-react'
 
 const nav = [
   { id: 'dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
   { id: 'subscribers', label: 'Subscribers',  icon: Users },
   { id: 'campaigns',   label: 'Campaigns',    icon: Send },
   { id: 'templates',   label: 'Templates',    icon: FileText },
+  { id: 'social',      label: 'Social',       icon: Megaphone },
   { id: 'history',     label: 'Send History', icon: Clock },
   { id: 'settings',    label: 'Settings',     icon: Settings },
 ]
@@ -26,7 +27,7 @@ export default function Sidebar({ current, onNavigate, unreadCount = 0, onToggle
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ color: 'var(--text-h)', fontWeight: 700, fontSize: 15 }}>MailWave</div>
-            <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>Newsletter Tool</div>
+            <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>Email & Social</div>
           </div>
           {/* Notification bell */}
           <button

@@ -57,6 +57,10 @@ const DEFAULTS = {
   ai_brand_tone:    'friendly',
   ai_brand_avoid:   '',
   ai_brand_signoff: '',
+  // Social posting: each platform's developer app (electron/social/). Secrets
+  // are sealed and, like ai_*, never sent to the Settings form.
+  social_linkedin_client_id:     '',
+  social_linkedin_client_secret: '',
 };
 
 function getAll() {

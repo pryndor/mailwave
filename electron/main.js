@@ -24,6 +24,13 @@ function createWindow() {
     },
   });
 
+  // Links with target="_blank" (e.g. "view on LinkedIn") open in the user's
+  // browser, never in a new app window.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
   } else {
@@ -143,6 +150,11 @@ function startScheduler() {
         if (firedReminders.size > 500) firedReminders.clear();
       }
 
+      // 4. ── Scheduled social posts ─────────────────────────────────────────
+      social.deps.notify = (title, body) => pushUI('social', title, body, null);
+      const posted = await social.runDue(now);
+      if (posted.length && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('social:changed', {});
+
     } catch (err) {
       console.error('[Scheduler] Error:', err.message);
     }
@@ -159,6 +171,7 @@ function rearmScheduledCampaigns() {
 app.whenReady().then(() => {
   createWindow();
   createTray();
+  social.init();
   startScheduler();
   rearmScheduledCampaigns();
   automation.start({ settings, db, mailer, mainWindow });
@@ -193,6 +206,7 @@ const automation = require('./automation-server');
 const license    = require('./license');
 const teamSync   = require('./teamSync');
 const contactChecks = require('./contactChecks');
+const social        = require('./social');
 
 // Write handlers push to the team repo a few seconds later instead of waiting
 // for the next 60s sync tick. No-op when Team Sync is off.
@@ -237,10 +251,10 @@ ipcMain.handle('startup:set', (_, enabled) => {
 });
 
 // team_* keys belong to Team Sync (team:* handlers), ai_* keys to the AI section
-// (ai:* handlers) and automation_* keys to the Automation API section
-// (automation:* handlers): secrets never reach the Settings form, and its stale
+// (ai:* handlers), automation_* keys to the Automation API section
+// (automation:* handlers) and social_* keys to the Social page (social:* handlers): secrets never reach the Settings form, and its stale
 // copy can't overwrite them.
-const OWN_SECTIONS = ['team_', 'ai_', 'automation_'];
+const OWN_SECTIONS = ['team_', 'ai_', 'automation_', 'social_'];
 const withoutSecretKeys = (obj) => Object.fromEntries(Object.entries(obj || {}).filter(([k]) => !OWN_SECTIONS.some(p => k.startsWith(p))));
 ipcMain.handle('settings:get',    () => withoutSecretKeys(settings.getAll()));
 ipcMain.handle('settings:save',   (_, data) => settings.save(withoutSecretKeys(data)));
@@ -449,3 +463,31 @@ ipcMain.handle('ai:report',      ai.handler((opts) => ai.report(opts)));
 ipcMain.handle('ai:subscriberFilter', ai.handler((opts) => ai.subscriberFilter(opts)));
 ipcMain.handle('ai:mapColumns',  ai.handler((opts) => ai.mapColumns(opts)));
 ipcMain.handle('ai:continue',    ai.handler((opts) => ai.continueWriting(opts)));
+ipcMain.handle('ai:socialPost',  ai.handler((opts) => ai.socialPost(opts)));
+
+// Social posting (electron/social/). Tokens and app secrets stay here; the
+// renderer only sees account names and post status.
+const socialCall = (fn) => async (_, arg) => {
+  try { return await fn(arg); }
+  catch (err) { return { ok: false, error: err.message || String(err) }; }
+};
+ipcMain.handle('social:config',        socialCall(()     => social.getConfig()));
+ipcMain.handle('social:saveAppConfig', socialCall((data) => social.saveAppConfig(data)));
+ipcMain.handle('social:connect',       socialCall(async (platform) => {
+  const r = await social.connect(platform);
+  if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+  return r;
+}));
+ipcMain.handle('social:cancelConnect', socialCall(()     => { social.cancelConnect(); return { ok: true }; }));
+ipcMain.handle('social:accounts',      socialCall(()     => social.listAccounts()));
+ipcMain.handle('social:disconnect',    socialCall((id)   => social.deleteAccount(id)));
+ipcMain.handle('social:posts',         socialCall(()     => social.listPosts()));
+ipcMain.handle('social:save',          socialCall((post) => social.savePost(post)));
+ipcMain.handle('social:delete',        socialCall((id)   => social.deletePost(id)));
+ipcMain.handle('social:publishNow',    socialCall((id)   => social.publishNow(id)));
+ipcMain.handle('social:schedule',      socialCall((data) => social.schedule(data)));
+ipcMain.handle('social:unschedule',    socialCall((id)   => social.unschedule(id)));
+ipcMain.handle('social:pickImage',     socialCall(async () => {
+  const r = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif'] }] });
+  return { ok: !r.canceled, path: r.filePaths?.[0] || '' };
+}));

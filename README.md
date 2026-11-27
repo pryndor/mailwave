@@ -1,6 +1,6 @@
 # MailWave
 
-A desktop app for sending email newsletters through **your own SMTP account**: no monthly fee per subscriber, no vendor lock-in, and your subscriber list never leaves your computer.
+A desktop app for promoting your business by **email and social media** from your own computer. Send newsletters through your own SMTP account, and publish posts to your social accounts, now or on a schedule. No monthly fee per subscriber, no vendor lock-in, and your data never leaves your computer.
 
 Linux, Windows and Mac. Built with Electron and React. Licensed AGPL-3.0.
 
@@ -8,12 +8,12 @@ Linux, Windows and Mac. Built with Electron and React. Licensed AGPL-3.0.
 - [Free](#free)
 - [Install](#install)
 - [Quick start](#quick-start)
-- [Guide](#guide): [importing](#importing-subscribers) · [writing](#writing-a-campaign) · [sending safely](#sending-safely) · [scheduling](#scheduling) · [A/B tests](#ab-testing-subject-lines) · [history](#history-and-failures) · [AI](#ai-writing-and-review) · [Team Sync](#team-sync) · [Automation API](#automation-api) · [more](#more-features)
+- [Guide](#guide): [importing](#importing-subscribers) · [writing](#writing-a-campaign) · [sending safely](#sending-safely) · [scheduling](#scheduling) · [A/B tests](#ab-testing-subject-lines) · [history](#history-and-failures) · [social posts](#social-posts) · [AI](#ai-writing-and-review) · [Team Sync](#team-sync) · [Automation API](#automation-api) · [more](#more-features)
 - [Privacy](#privacy) · [Compliance](#compliance) · [Build from source](#build-from-source) · [License](#license-and-credits)
 
 ## Why MailWave
 
-Mailchimp, Brevo and similar services charge every month by list size and keep your list on their servers. If you already pay for an email account (Zoho, Gmail, Outlook, your own mail server) or a sending service (Brevo, SendGrid, Amazon SES), MailWave sends your newsletters through it from your own computer.
+Mailchimp, Brevo and similar services charge every month by list size and keep your list on their servers. Social schedulers such as Buffer or Hootsuite charge per account. If you already pay for an email account (Zoho, Gmail, Outlook, your own mail server) or a sending service (Brevo, SendGrid, Amazon SES), MailWave sends your newsletters through it from your own computer, and posts to your social accounts directly through each platform's official API.
 
 It's built for **lists of people who opted in**: newsletters, customer updates, announcements. It is not a cold-email tool, and it stops itself when a list looks bad.
 
@@ -64,6 +64,7 @@ chmod +x MailWave-*.AppImage
 3. **Settings → Sender Identity:** set your from name and address, a reply-to and unsubscribe address if different, and your **postal address**. US anti-spam law (CAN-SPAM) requires one, and MailWave adds it to every email's footer.
 4. **Settings → Daily Sending Limit:** set the limit to your provider's daily sending limit or lower. MailWave pauses there and continues the next day by itself.
 5. **Subscribers → Import CSV**, then **Campaigns → New Campaign**, write it, send yourself a **Preview**, and **Send**.
+6. Optional: **Social → Accounts** to connect LinkedIn, then **New Post**. See [Social posts](#social-posts).
 
 ## Guide
 
@@ -145,6 +146,28 @@ Fill in **Subject B** in the editor, then choose:
 
 **History** lists every email sent. Pick a campaign to see why sends failed, grouped by cause (address doesn't exist, mailbox full, provider limit, login failed…), each with what to do. There is also an **AI campaign report**: how the campaign did compared with your previous ones, likely reasons for weak results, and next steps.
 
+### Social posts
+
+**Social** publishes posts to your social accounts: write once, choose the accounts, then **Publish now**, **Schedule** or **Save draft**.
+
+| Platform | Status |
+|---|---|
+| LinkedIn (your personal profile) | ✅ Text, one image or a link preview |
+| Facebook Pages, Instagram (Business), X (Twitter), Bluesky, Threads, Mastodon, Google Business Profile, Pinterest | Planned, in that order |
+
+- **One post, several platforms.** Each platform gets its own tab where you can write a different version; empty means it uses the main text. Character limits are checked before anything is sent.
+- **AI writer** (needs AI turned on): write posts from a short description, fit your text to each platform's style, or turn an email campaign into posts that promote it.
+- **Scheduling:** MailWave must be running at that time (it can sit in the tray). A post more than 6 hours late, because the app was closed, is held as *missed* for you to publish or reschedule instead of going out at the wrong time.
+- **Status per account:** if one account fails, the others still get the post, and **Retry** sends it only where it's missing. If MailWave closes in the middle of publishing, the post is marked failed rather than retried by itself, so nothing is posted twice.
+
+**Connecting LinkedIn.** MailWave connects through your own free LinkedIn developer app, the same way it sends email through your own SMTP account. Nothing goes through a third-party server. **Social → Accounts → LinkedIn → Show app setup** walks you through it:
+1. Create an app at [linkedin.com/developers/apps](https://www.linkedin.com/developers/apps). LinkedIn asks you to link a Company Page; any page you admin works.
+2. On **Products**, add **Sign In with LinkedIn using OpenID Connect** and **Share on LinkedIn** (both approved instantly).
+3. On **Auth**, add `http://localhost:47615/linkedin/callback` as an authorized redirect URL.
+4. Paste the **Client ID** and **Client Secret** into MailWave, save, and click **Connect**.
+
+LinkedIn sign-ins last 60 days. MailWave warns you a week before one expires; click **Connect** again to renew it. Posting to Company Pages needs LinkedIn's Community Management API, which LinkedIn grants after review, so it isn't offered yet.
+
 ### AI writing and review
 
 AI is optional. **Settings → AI Writing & Review:** turn it on and paste an API key from Anthropic (Claude), OpenAI, Google Gemini, Groq, xAI (Grok), Mistral, DeepSeek or OpenRouter. MailWave recognises the provider from the key. Under **Advanced** you can use a local model with [Ollama](https://ollama.com) (nothing leaves your computer), any OpenAI-compatible server, or pick specific models. Usage is billed by your provider; Settings shows this month's calls and tokens.
@@ -162,12 +185,13 @@ Set your **brand voice** once (what you do, tone, words to avoid, sign-off) and 
 | Editor and checklist → **AI Review** | Spam risk, mistakes, placeholder links, compliance and claims, subject score |
 | History → **AI campaign report** | How it did and what to do next |
 | Subscribers → **Smart filter** | A filter from a plain-language request |
+| Social → **AI writer** | Social posts from a brief, an existing post or an email campaign, one version per platform |
 
 AI output always appears for you to check first and can be undone.
 
 ### Team Sync
 
-Teammates share subscribers, groups, templates, campaigns, schedules, send history and the AI brand voice through a **private GitHub repository**, encrypted on each computer before upload, so GitHub only stores unreadable data. No server is needed. Passwords and API keys are never shared. A separate **test workspace** lets you try it without touching your real data.
+Teammates share subscribers, groups, templates, campaigns, schedules, send history and the AI brand voice (social posts and accounts stay on each computer for now) through a **private GitHub repository**, encrypted on each computer before upload, so GitHub only stores unreadable data. No server is needed. Passwords and API keys are never shared. A separate **test workspace** lets you try it without touching your real data.
 
 Setup and details: [TEAM_SYNC.md](TEAM_SYNC.md).
 
@@ -205,14 +229,15 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:8787/campaigns
 
 Your data lives in a local database on your computer. Nothing is uploaded except:
 - the emails you send, through your own SMTP provider;
+- social posts you publish, sent straight to that platform's API with your own sign-in;
 - Team Sync data, end-to-end encrypted, to your team's private GitHub repo, if you use it;
 - calls to your AI provider, if you turn AI on. These contain only the text you write, the campaign's content, field, group and campaign names, column headers with what their values look like, and counts. Subscriber addresses, names and field values are never sent, and the test suite checks this.
 
-API keys and passwords are stored encrypted with your system's keychain where available. AI call metadata (feature, model, tokens, time) is logged locally, never the content.
+API keys, social sign-in tokens and app secrets are stored encrypted with your system's keychain where available, and never reach the app's interface. AI call metadata (feature, model, tokens, time) is logged locally, never the content.
 
 ## Compliance
 
-You're responsible for following CAN-SPAM, GDPR and the other email laws that apply to you, including having consent from everyone on your list and acting on unsubscribe requests promptly. MailWave helps with unsubscribe headers, a postal address footer, bounce handling and automatic pauses, but it can't check consent for you.
+You're responsible for following CAN-SPAM, GDPR and the other email laws that apply to you, and each social platform's rules for automated posting, including having consent from everyone on your list and acting on unsubscribe requests promptly. MailWave helps with unsubscribe headers, a postal address footer, bounce handling and automatic pauses, but it can't check consent for you.
 
 ## Build from source
 
@@ -230,7 +255,7 @@ npm run build:win    # NSIS installer (on Windows)
 npm run build:mac    # dmg + zip (on macOS)
 ```
 
-The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, and the AI features against a fake provider.
+The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, social posting against a fake LinkedIn API (including the sign-in callback), and the AI features against a fake provider.
 
 CI (`.github/workflows/build.yml`) builds all three systems and attaches them to a draft GitHub Release when you push a `v*` tag.
 
@@ -239,6 +264,7 @@ CI (`.github/workflows/build.yml`) builds all three systems and attaches them to
 | Path | What's there |
 |---|---|
 | `electron/` | Main process: database (`db.js`), sending (`mailer.js`), AI (`ai*.js`), Team Sync, Automation API, Smart Schedule |
+| `electron/social/` | Social posting: accounts and posts (`store.js`), scheduling (`index.js`), OAuth sign-in (`oauth.js`), one file per platform (`linkedin.js`) |
 | `renderer/` | The interface (React + Vite) |
 | `tests/` | Test suite (`node:test`) |
 | `license-tooling/` | Scripts to make the signing key pair and issue Pro licenses (paid plans are off for now) |

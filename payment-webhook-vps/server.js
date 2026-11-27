@@ -1,8 +1,7 @@
 // Standalone Node.js service: Razorpay calls it on each successful
 // subscription charge; it verifies the request, signs a MailWave Pro license
 // token and emails it to the buyer. Runs as a long-lived process behind Apache
-// as a reverse proxy on the Hetzner VPS (same box as ncloud.drugvigil.com),
-// on a subdomain like webhook.drugvigil.com. See README.md for the Apache
+// as a reverse proxy on a VPS, on its own subdomain. See README.md for the Apache
 // vhost + systemd setup.
 //
 // Required environment variables (set via the systemd unit's EnvironmentFile,

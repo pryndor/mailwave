@@ -6,6 +6,7 @@ import Subscribers from './pages/Subscribers.jsx'
 import Campaigns from './pages/Campaigns.jsx'
 import Templates from './pages/Templates.jsx'
 import History from './pages/History.jsx'
+import Social from './pages/Social.jsx'
 import Settings from './pages/Settings.jsx'
 import toast, { Toaster } from 'react-hot-toast'
 
@@ -40,6 +41,7 @@ export default function App() {
     subscribers: <Subscribers />,
     campaigns:   <Campaigns />,
     templates:   <Templates />,
+    social:      <Social />,
     history:     <History key={teamVersion} />,
     settings:    <Settings />,
   }
