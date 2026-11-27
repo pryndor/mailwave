@@ -3,8 +3,12 @@
 //
 // A provider is how accounts are connected (one developer app, one sign-in):
 //   { id, name, platforms, REDIRECT_URI, connect() } → one account or several
+// or, without a developer app, with a form the user fills in (Bluesky: handle
+// and app password; Mastodon: server): { form: [{ key, label }], connect({ input }) }
 // A publisher posts to one kind of account:
 //   { id, name, maxChars, requiresImage, publish() }
+// plus, where the platform counts differently or puts the link in the text:
+//   postText(text, link, { image }), countChars(text, account), limitFor(account)
 // LinkedIn and X are both; Meta is one provider for the facebook and
 // instagram publishers. A platform whose tokens expire quickly (X: two hours)
 // also has refresh(), and index.js renews the token before publishing.
@@ -19,15 +23,15 @@ const oauth    = require('./oauth');
 const linkedin = require('./linkedin');
 const meta     = require('./meta');
 const x        = require('./x');
+const bluesky  = require('./bluesky');
+const mastodon = require('./mastodon');
 
-const PROVIDERS  = { linkedin, meta, x };
-const PLATFORMS  = { linkedin, facebook: meta.facebook, instagram: meta.instagram, x }; // publishers
+const PROVIDERS  = { linkedin, meta, x, bluesky, mastodon };
+const PLATFORMS  = { linkedin, facebook: meta.facebook, instagram: meta.instagram, x, bluesky, mastodon }; // publishers
 
 // Platforms planned but not built yet, shown greyed out on the Accounts tab.
 const COMING_SOON = [
-  { id: 'bluesky',   name: 'Bluesky' },
   { id: 'threads',   name: 'Threads' },
-  { id: 'mastodon',  name: 'Mastodon' },
   { id: 'google',    name: 'Google Business Profile' },
   { id: 'pinterest', name: 'Pinterest' },
 ];
@@ -54,10 +58,11 @@ function getConfig() {
   return {
     providers: Object.values(PROVIDERS).map(p => {
       const c = appConfig(p.id);
-      return { id: p.id, name: p.name, platforms: p.platforms, redirectUri: p.REDIRECT_URI, clientId: c.clientId, hasSecret: !!c.clientSecret, secretOptional: !!p.secretOptional };
+      return { id: p.id, name: p.name, platforms: p.platforms, redirectUri: p.REDIRECT_URI, clientId: c.clientId, hasSecret: !!c.clientSecret, secretOptional: !!p.secretOptional, form: p.form || null };
     }),
-    // countsLikeX: the renderer counts links as 23 and wide characters as 2.
-    publishers: Object.values(PLATFORMS).map(p => ({ id: p.id, name: p.name, maxChars: p.maxChars, requiresImage: !!p.requiresImage, countsLikeX: !!p.countChars })),
+    // counting / linkInText tell the renderer's counter to measure like the
+    // platform does (text.js): 'x' | 'mastodon' | 'graphemes', 'always' | 'with-image'.
+    publishers: Object.values(PLATFORMS).map(p => ({ id: p.id, name: p.name, maxChars: p.maxChars, requiresImage: !!p.requiresImage, counting: p.counting || null, linkInText: p.linkInText || null })),
     comingSoon: COMING_SOON,
   };
 }
@@ -77,10 +82,13 @@ function saveAppConfig({ provider, platform, clientId, clientSecret } = {}) {
 
 // Returns every account the sign-in gave access to (Meta: one per Page and
 // per linked Instagram account).
-async function connect(provider) {
+// `arg` is the provider id, or { provider, input } for a form-based one.
+async function connect(arg) {
+  const provider = typeof arg === 'string' ? arg : arg?.provider;
   const p = PROVIDERS[provider];
   if (!p) throw new Error('This platform isn\'t supported yet.');
-  const result = await p.connect({ ...appConfig(provider), oauth, openUrl: deps.openUrl });
+  const input = (typeof arg === 'object' && arg?.input) || {};
+  const result = await p.connect({ ...appConfig(provider), input, oauth, openUrl: deps.openUrl });
   const accounts = (Array.isArray(result) ? result : [result]).map(a => store.upsertAccount(a));
   return { ok: true, accounts, account: accounts[0] };
 }
@@ -97,11 +105,14 @@ function textFor(post, platform) {
   return (typeof v === 'string' && v.trim()) ? v : post.text;
 }
 
-// Length the way the platform counts it. X counts the link too, because it
-// goes in the text.
-function lengthFor(p, text, link) {
-  return p.countChars ? p.countChars(p.postText(text, (link || '').trim())) : text.length;
+// Length the way the platform counts it, including the link where the
+// platform puts it in the text (X, Mastodon, Bluesky with an image).
+function lengthFor(p, text, link, image, account) {
+  if (!p.countChars) return text.length;
+  const full = p.postText ? p.postText(text, (link || '').trim(), { image: !!image }) : text;
+  return p.countChars(full, account);
 }
+const limitOf = (p, account) => (p.limitFor ? p.limitFor(account) : p.maxChars);
 
 // Problems that would make a publish fail, found before trying.
 function validate(post, accounts = store.listAccounts()) {
@@ -115,8 +126,10 @@ function validate(post, accounts = store.listAccounts()) {
     const text = textFor(post, t.platform).trim();
     if (!text && !post.image_path) problems.push(`${p.name}: the post is empty.`);
     if (p.requiresImage && !post.image_path) problems.push(`${p.name}: add an image, it can't publish text-only posts.`);
-    const len = lengthFor(p, text, post.link);
-    if (len > p.maxChars) problems.push(`${p.name}: ${len} characters${p.countChars && post.link ? ' with the link' : ''}, the limit is ${p.maxChars}.`);
+    const len = lengthFor(p, text, post.link, post.image_path, acc);
+    const max = limitOf(p, acc);
+    const linkCounted = post.link && p.linkInText && (p.linkInText === 'always' || post.image_path);
+    if (len > max) problems.push(`${p.name}: ${len} characters${linkCounted ? ' with the link' : ''}, the limit is ${max}.`);
     if (p.maxHashtags && meta.countHashtags(text) > p.maxHashtags) problems.push(`${p.name}: more than ${p.maxHashtags} hashtags.`);
     if (acc.expired) problems.push(`${acc.name} (${p.name}): sign-in expired. Reconnect it on the Accounts tab.`);
   }
@@ -159,8 +172,8 @@ async function publishClaimed(id) {
     const text = textFor(post, t.platform);
     if (!p || !account) { store.updateTarget(t.id, { status: 'failed', error: 'Account is no longer connected.' }); continue; }
     if (account.expired) { store.updateTarget(t.id, { status: 'failed', error: 'Sign-in expired. Reconnect the account, then retry.' }); continue; }
-    const len = lengthFor(p, text, post.link);
-    if (len > p.maxChars) { store.updateTarget(t.id, { status: 'failed', error: `Too long: ${len} of ${p.maxChars} characters.` }); continue; }
+    const len = lengthFor(p, text, post.link, post.image_path, account);
+    if (len > limitOf(p, account)) { store.updateTarget(t.id, { status: 'failed', error: `Too long: ${len} of ${limitOf(p, account)} characters.` }); continue; }
 
     store.updateTarget(t.id, { status: 'publishing', error: '' });
     try {

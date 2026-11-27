@@ -156,7 +156,9 @@ Fill in **Subject B** in the editor, then choose:
 | Facebook Pages | ✅ Text with a link preview, or one image |
 | Instagram (Business or Creator account linked to a Facebook Page) | ✅ One image with a caption (Instagram doesn't allow text-only posts) |
 | X (Twitter) | ✅ Text (a link goes in the text and shows as a card) or one image. X charges per post, see below |
-| Bluesky, Mastodon, Threads, Google Business Profile, Pinterest | Planned, in that order |
+| Bluesky | ✅ Text with clickable links and hashtags, a link preview card, or one image. Free, no developer app |
+| Mastodon (any server) | ✅ Text (link in the text) or one image, with your server's own character limit. Free, no developer app |
+| Threads, Google Business Profile, Pinterest | Planned, in that order |
 
 - **One post, several platforms.** Each platform gets its own tab where you can write a different version; empty means it uses the main text. Character limits are checked before anything is sent.
 - **AI writer** (needs AI turned on): write posts from a short description, fit your text to each platform's style, or turn an email campaign into posts that promote it.
@@ -185,6 +187,10 @@ Instagram only accepts images from a web address, so MailWave uploads the image 
 4. Paste the **OAuth 2.0 Client ID** (and, for a Web App, the Client Secret) into MailWave, save, and click **Connect**.
 
 X sign-ins last two hours, so MailWave keeps the refresh token X gives and renews the sign-in by itself before each post. The character counter counts the way X does: 280 characters, a link counts as 23, emoji and some scripts count double.
+
+**Connecting Bluesky.** No developer app needed. In Bluesky, create an **app password** (Settings → Privacy and security → App passwords), then on **Social → Accounts → Bluesky** enter your handle and that app password and click **Connect**. Don't use your main password: an app password can only post and can be revoked on its own. MailWave doesn't store the app password; it keeps the sign-in Bluesky returns and renews it as you post. Accounts hosted outside bsky.social can fill in their hosting provider.
+
+**Connecting Mastodon.** Type your server (e.g. `mastodon.social`) on **Social → Accounts → Mastodon** and click **Connect**. MailWave registers itself on that server and opens its sign-in page in your browser; approve it and you're done. MailWave reads the server's character limit (500 on most servers, more on some) and counts links as 23 characters, as Mastodon does. Revoke access any time under Preferences → Account → Authorized apps.
 
 LinkedIn sign-ins last 60 days. MailWave warns you a week before one expires; click **Connect** again to renew it. Posting to Company Pages needs LinkedIn's Community Management API, which LinkedIn grants after review, so it isn't offered yet.
 
@@ -277,7 +283,7 @@ npm run build:win    # NSIS installer (on Windows)
 npm run build:mac    # dmg + zip (on macOS)
 ```
 
-The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, social posting against fake LinkedIn, Facebook/Instagram and X APIs (including the sign-in callback), and the AI features against a fake provider.
+The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, social posting against fake LinkedIn, Facebook/Instagram, X, Bluesky and Mastodon APIs (including the sign-in callback), and the AI features against a fake provider.
 
 CI (`.github/workflows/build.yml`) builds all three systems and attaches them to a draft GitHub Release when you push a `v*` tag. Users' apps are told about the release once you **publish** the draft (drafts and pre-releases are never announced).
 
@@ -286,7 +292,7 @@ CI (`.github/workflows/build.yml`) builds all three systems and attaches them to
 | Path | What's there |
 |---|---|
 | `electron/` | Main process: database (`db.js`), sending (`mailer.js`), AI (`ai*.js`), Team Sync, Automation API, Smart Schedule |
-| `electron/social/` | Social posting: accounts and posts (`store.js`), scheduling (`index.js`), OAuth sign-in (`oauth.js`), one file per platform (`linkedin.js`, `meta.js` for Facebook and Instagram, `x.js`) |
+| `electron/social/` | Social posting: accounts and posts (`store.js`), scheduling (`index.js`), OAuth sign-in (`oauth.js`), one file per platform (`linkedin.js`, `meta.js` for Facebook and Instagram, `x.js`, `bluesky.js`, `mastodon.js`), and how each platform counts characters (`text.js`) |
 | `renderer/` | The interface (React + Vite) |
 | `tests/` | Test suite (`node:test`) |
 | `license-tooling/` | Scripts to make the signing key pair and issue Pro licenses (paid plans are off for now) |

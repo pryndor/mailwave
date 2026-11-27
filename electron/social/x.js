@@ -26,7 +26,6 @@ const REDIRECT_URI  = `http://127.0.0.1:${PORT}${CALLBACK_PATH}`;
 const SCOPES        = ['tweet.read', 'tweet.write', 'users.read', 'media.write', 'offline.access'];
 
 const MAX_CHARS       = 280;
-const URL_LENGTH      = 23; // every link counts as a t.co link
 const IMAGE_TYPES     = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp' };
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -37,30 +36,9 @@ class XError extends Error {
   constructor(message, { status, auth = false } = {}) { super(message); this.status = status; this.auth = auth; }
 }
 
-// ── Character counting ───────────────────────────────────────────────────────
-
-// X's weighted length, close to twitter-text: links count as 23, most Latin,
-// Greek, Cyrillic and punctuation characters as 1, everything else (CJK,
-// emoji) as 2, out of 280.
-const URL_RE = /https?:\/\/[^\s]+/gi;
-function countChars(text) {
-  const s = String(text || '');
-  const urls = s.match(URL_RE) || [];
-  let n = urls.length * URL_LENGTH;
-  for (const ch of s.replace(URL_RE, '')) {
-    const c = ch.codePointAt(0);
-    const light = c <= 0x10ff || (c >= 0x2000 && c <= 0x200d) || (c >= 0x2010 && c <= 0x201f) || (c >= 0x2032 && c <= 0x2037);
-    n += light ? 1 : 2;
-  }
-  return n;
-}
-
 // X has no separate link field: the link goes in the text, where X turns it
-// into a preview card.
-function withLink(text, link) {
-  if (!link || text.includes(link)) return text;
-  return text ? `${text}\n\n${link}` : link;
-}
+// into a preview card. Counting (links 23, wide characters 2) is in text.js.
+const { withLink, countX } = require('./text');
 
 // ── Sign-in ──────────────────────────────────────────────────────────────────
 
@@ -184,6 +162,6 @@ module.exports = {
   REDIRECT_URI, SCOPES,
   connect, refresh, publish,
   // The text as it will be posted, and its length the way X counts it.
-  postText: withLink, countChars,
+  postText: withLink, countChars: countX, counting: 'x', linkInText: 'always',
   buildAuthUrl, pkce, XError, deps,
 };

@@ -36,17 +36,22 @@ function toLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-// X's way of counting (mirrors electron/social/x.js): every link is 23,
-// most Latin/Cyrillic/punctuation 1, other characters (CJK, emoji) 2.
+// Each platform's way of counting, mirroring electron/social/text.js.
 const URL_RE = /https?:\/\/[^\s]+/gi
-function xLength(text) {
-  const s = String(text || '')
-  let n = (s.match(URL_RE) || []).length * 23
-  for (const ch of s.replace(URL_RE, '')) {
-    const c = ch.codePointAt(0)
-    n += (c <= 0x10ff || (c >= 0x2000 && c <= 0x200d) || (c >= 0x2010 && c <= 0x201f) || (c >= 0x2032 && c <= 0x2037)) ? 1 : 2
-  }
-  return n
+const COUNTERS = {
+  // X: every link 23, most Latin/Cyrillic/punctuation 1, other characters (CJK, emoji) 2
+  x: (s) => {
+    let n = (s.match(URL_RE) || []).length * 23
+    for (const ch of s.replace(URL_RE, '')) {
+      const c = ch.codePointAt(0)
+      n += (c <= 0x10ff || (c >= 0x2000 && c <= 0x200d) || (c >= 0x2010 && c <= 0x201f) || (c >= 0x2032 && c <= 0x2037)) ? 1 : 2
+    }
+    return n
+  },
+  // Mastodon: links count as the server's URL length, @user@server as @user
+  mastodon: (s, urlChars = 23) => (s.match(URL_RE) || []).length * urlChars + [...s.replace(URL_RE, '').replace(/(@[\w.]+)@[\w.-]+\w/g, '$1')].length,
+  // Bluesky: user-perceived characters
+  graphemes: (s) => typeof Intl.Segmenter === 'function' ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(s)].length : [...s].length,
 }
 const withLink = (text, link) => (!link || text.includes(link)) ? text : (text ? `${text}\n\n${link}` : link)
 
@@ -280,12 +285,22 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
     )
   }
 
-  // Length as each platform counts it. X counts the link, which goes in the text.
-  const lengthOn = (pl, t) => publishers[pl]?.countsLikeX ? xLength(withLink(t, link.trim())) : t.length
-  const limit = view === 'all' ? Math.min(...platforms.map(p => limits[p] || Infinity)) : limits[view]
-  const over = platforms.filter(p => lengthOn(p, textFor(p)) > (limits[p] || Infinity))
+  // Length and limit as each platform counts them, including the link where
+  // the platform puts it in the text. Mastodon servers set their own limit.
+  const mastodonAccounts = chosen.filter(a => a.platform === 'mastodon')
+  const limitOn = (pl) => pl === 'mastodon' && mastodonAccounts.length
+    ? Math.min(...mastodonAccounts.map(a => a.meta?.max_chars || limits.mastodon)) : (limits[pl] || Infinity)
+  const linkCounted = (pl) => !!link.trim() && (publishers[pl]?.linkInText === 'always' || (publishers[pl]?.linkInText === 'with-image' && !!imagePath))
+  const lengthOn = (pl, t) => {
+    const counter = COUNTERS[publishers[pl]?.counting]
+    if (!counter) return t.length
+    const full = linkCounted(pl) ? withLink(t, link.trim()) : t
+    return pl === 'mastodon' ? counter(full, Math.max(...mastodonAccounts.map(a => a.meta?.url_chars || 23), 23)) : counter(full)
+  }
+  const over = platforms.filter(p => lengthOn(p, textFor(p)) > limitOn(p))
   // Main text: show the count for the platform with the tightest limit.
-  const tightest = view === 'all' ? platforms.reduce((a, p) => (limits[p] || Infinity) < (limits[a] || Infinity) ? p : a, platforms[0]) : view
+  const tightest = view === 'all' ? platforms.reduce((a, p) => limitOn(p) < limitOn(a) ? p : a, platforms[0]) : view
+  const limit = tightest ? limitOn(tightest) : Infinity
   const shown = view === 'all' ? text : textFor(view)
   const count = tightest ? lengthOn(tightest, shown) : shown.length
   const needImage = imagePath ? [] : platforms.filter(p => publishers[p]?.requiresImage).map(p => publishers[p].name)
@@ -332,8 +347,8 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
             <textarea className="textarea" rows={10} value={current} onChange={e => setCurrent(e.target.value)}
               placeholder={view === 'all' ? 'What do you want to share? Announce an event, an offer, a new article…' : textFor(view)} />
             <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 12, marginTop: 4, color: count > limit ? 'var(--danger)' : 'var(--text-dim)' }}
-              title={publishers[tightest]?.countsLikeX ? 'Counted the way X counts: the link is 23 characters, emoji and some scripts count double' : ''}>
-              {count}{Number.isFinite(limit) ? ` / ${limit}` : ''}{publishers[tightest]?.countsLikeX && link.trim() ? ' (with link)' : ''}
+              title={tightest && publishers[tightest]?.counting ? `Counted the way ${publishers[tightest].name} counts${linkCounted(tightest) ? ', including the link' : ''}` : ''}>
+              {count}{Number.isFinite(limit) ? ` / ${limit}` : ''}{tightest && view === 'all' && platforms.length > 1 ? ` (${publishers[tightest]?.name})` : ''}{tightest && linkCounted(tightest) && publishers[tightest]?.counting ? ' with link' : ''}
             </div>
 
             <div className="form-row" style={{ marginTop: 10 }}>
@@ -349,7 +364,7 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
                 <button className="btn btn-ghost btn-sm" onClick={() => setImage('')}><X size={12} /></button>
               </>}
             </div>
-            {imagePath && link && <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>With an image attached, the image is shown instead of a link preview. Facebook and X get the link added to the text; on LinkedIn, put it in the text yourself if people should click it.</p>}
+            {imagePath && link && <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>With an image attached, the image is shown instead of a link preview. Facebook, X, Bluesky and Mastodon get the link added to the text; on LinkedIn, put it in the text yourself if people should click it.</p>}
           </div>
 
           {over.length > 0 && <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 10 }}>Too long for {over.join(', ')}. Shorten it, or write a shorter version on that platform's tab.</p>}
@@ -438,6 +453,16 @@ const SETUP_STEPS = {
     <>Add the callback URL below exactly as shown (it uses <strong>127.0.0.1</strong>, not localhost), and any website for the required website field.</>,
     <>Copy the <strong>OAuth 2.0 Client ID</strong> (not the API Key) into the field here. For a Web App, also the Client Secret. Save, then click Connect.</>,
   ],
+  bluesky: [
+    <>In Bluesky, open <strong>Settings → Privacy and security → App passwords</strong> and click <strong>Add App Password</strong>. Name it "MailWave".</>,
+    <>Enter your handle (e.g. <strong>yourname.bsky.social</strong>) and that app password here, then click Connect. Don't use your main password: an app password can only post, and you can revoke it on its own.</>,
+    <>MailWave doesn't keep the app password. It keeps the sign-in Bluesky gives back, which renews itself as you post.</>,
+  ],
+  mastodon: [
+    <>Type the server your account is on (the part after the second @ in your address, e.g. <strong>mastodon.social</strong>) and click Connect.</>,
+    <>MailWave registers itself on that server and your browser opens its sign-in page. Approve access to post, and you're done. Nothing to set up by hand.</>,
+    <>You can see or revoke access later in Mastodon under <strong>Preferences → Account → Authorized apps</strong>.</>,
+  ],
   linkedin: [
     <>Go to <strong>linkedin.com/developers/apps</strong> and click <strong>Create app</strong>. It needs a LinkedIn Company Page to be linked; any page you admin works.</>,
     <>On the app's <strong>Products</strong> tab, add <strong>Sign In with LinkedIn using OpenID Connect</strong> and <strong>Share on LinkedIn</strong>. Both are approved instantly.</>,
@@ -450,21 +475,25 @@ const PROVIDER_NOTE = {
   linkedin: 'Posts to your personal profile · up to 3000 characters · one image or link per post',
   meta: 'Posts to Facebook Pages you manage, and to Instagram Business/Creator accounts linked to them · Instagram needs an image',
   x: 'Posts to your X account · 280 characters (a link counts as 23) · one image · paid per post by X',
+  bluesky: 'Posts to your Bluesky account · 300 characters · one image, or a link with a preview card · free',
+  mastodon: 'Posts to your account on any Mastodon server · usually 500 characters (the server sets it) · one image · free',
 }
 const CREDENTIAL_LABELS = { meta: ['App ID', 'App Secret'], linkedin: ['Client ID', 'Client Secret'], x: ['OAuth 2.0 Client ID', 'Client Secret (Web App only)'] }
-const PLATFORM_NAME = { linkedin: 'LinkedIn', facebook: 'Facebook', instagram: 'Facebook', x: 'X' }
+const PLATFORM_NAME = { linkedin: 'LinkedIn', facebook: 'Facebook', instagram: 'Facebook', x: 'X', bluesky: 'Bluesky', mastodon: 'Mastodon' }
 
 function Accounts({ accounts, config, onChanged }) {
   if (!config) return null
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {config.providers.map(p => (
+      {config.providers.map(p => p.form ? (
+        <FormPlatformCard key={p.id} platform={p} accounts={accounts.filter(a => p.platforms.includes(a.platform))} onChanged={onChanged} />
+      ) : (
         <PlatformCard key={p.id} platform={p} accounts={accounts.filter(a => p.platforms.includes(a.platform))} onChanged={onChanged} />
       ))}
       <div className="card">
         <div style={{ fontWeight: 600, color: 'var(--text-h)', fontSize: 13, marginBottom: 10 }}>Coming next</div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {config.comingSoon.map(p => (
+          {config.comingSoon.length > 0 && config.comingSoon.map(p => (
             <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-dim)', opacity: 0.8 }}>
               <PlatformBadge platform={p.id} size={16} /> {p.name}
             </span>
@@ -561,6 +590,86 @@ function PlatformCard({ platform, accounts, onChanged }) {
             </div>
             <button className="btn btn-primary btn-sm" onClick={saveCreds} disabled={!clientId.trim() || (!secret && !platform.hasSecret && !platform.secretOptional)}>Save credentials</button>
           </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AccountRow({ a, onChanged }) {
+  const disconnect = async () => {
+    if (!confirm(`Disconnect ${a.name}? Scheduled posts to this account won't go out. To fully revoke access, also remove MailWave in your ${PLATFORM_NAME[a.platform] || a.platform} settings.`)) return
+    await window.api.social.disconnect(a.id)
+    onChanged()
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+      {a.avatar ? <img src={a.avatar} alt="" style={{ width: 28, height: 28, borderRadius: '50%' }} /> : <PlatformBadge platform={a.platform} size={28} />}
+      <div style={{ flex: 1, fontSize: 13 }}>
+        <div style={{ color: 'var(--text-h)' }}>{a.name}</div>
+        <div style={{ fontSize: 11, color: a.expired ? 'var(--danger)' : a.expiring ? '#e0a020' : 'var(--text-dim)' }}>
+          {a.expired ? 'Sign-in expired: click Connect to renew' : a.renews ? 'Connected · sign-in renews automatically' : a.expires_at ? `Sign-in valid until ${fmt(a.expires_at)}` : 'Connected'}
+        </div>
+      </div>
+      <button className="btn btn-ghost btn-sm" onClick={disconnect}><Unplug size={12} /> Disconnect</button>
+    </div>
+  )
+}
+
+// Platforms that connect with a small form instead of a developer app
+// (Bluesky: handle + app password; Mastodon: server).
+function FormPlatformCard({ platform, accounts, onChanged }) {
+  const [input, setInput] = useState({})
+  const [connecting, setConnecting] = useState(false)
+  const [showHelp, setShowHelp] = useState(!accounts.length)
+  const required = platform.form.filter(f => !/optional/i.test(f.label))
+  const ready = required.every(f => String(input[f.key] || '').trim())
+
+  const connect = async () => {
+    setConnecting(true)
+    try {
+      const r = await window.api.social.connect({ provider: platform.id, input })
+      if (r?.ok) {
+        toast.success(`Connected ${r.accounts.map(a => a.name).join(', ')}`)
+        setInput(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => !platform.form.find(f => f.key === k)?.secret)))
+        onChanged()
+      } else toast.error(r?.error || 'Could not connect', { duration: 10000 })
+    } finally { setConnecting(false) }
+  }
+
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        {platform.platforms.map(id => <PlatformBadge key={id} platform={id} size={26} />)}
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600, color: 'var(--text-h)', fontSize: 14 }}>{platform.name}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{PROVIDER_NOTE[platform.id]}</div>
+        </div>
+        {connecting && platform.redirectUri && <button className="btn btn-ghost" onClick={() => window.api.social.cancelConnect()}>Cancel sign-in</button>}
+      </div>
+      {connecting && platform.redirectUri && <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 10 }}>Finish signing in in your browser, then come back here.</p>}
+
+      {accounts.map(a => <AccountRow key={a.id} a={a} onChanged={onChanged} />)}
+
+      <div style={{ borderTop: accounts.length ? '1px solid var(--border)' : 'none', paddingTop: accounts.length ? 10 : 0 }}>
+        <div className="form-row" style={{ alignItems: 'flex-end' }}>
+          {platform.form.map(f => (
+            <div key={f.key} className="form-group" style={{ flex: 1 }}>
+              <label>{f.label}</label>
+              <input className="input" type={f.secret ? 'password' : 'text'} placeholder={f.placeholder || ''} value={input[f.key] || ''}
+                onChange={e => setInput(prev => ({ ...prev, [f.key]: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && ready && !connecting && connect()} />
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-primary btn-sm" disabled={!ready || connecting} onClick={connect}><Plug size={12} /> {connecting ? 'Connecting…' : accounts.length ? 'Connect another' : 'Connect'}</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowHelp(v => !v)}>{showHelp ? 'Hide' : 'Show'} how</button>
+        </div>
+        {showHelp && (
+          <ol style={{ fontSize: 12, color: 'var(--text)', paddingLeft: 18, marginTop: 10, lineHeight: 1.7 }}>
+            {(SETUP_STEPS[platform.id] || []).map((step, i) => <li key={i}>{step}</li>)}
+          </ol>
         )}
       </div>
     </div>

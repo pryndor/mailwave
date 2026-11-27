@@ -698,7 +698,7 @@ async function socialPost({ brief = '', text = '', campaign_id = null, link = ''
 
   const user =
     `${source}\n\n` +
-    (link.trim() ? `The post links to ${link.trim()}. The link is attached separately on LinkedIn and Facebook, so don't paste it into those posts; include it in the text for other platforms.\n\n` : '') +
+    (link.trim() ? `The post links to ${link.trim()}. The link is attached separately as a preview card on LinkedIn, Facebook and Bluesky, so don't paste it into those posts; include it in the text for other platforms.\n\n` : '') +
     `Write one version for each of these platforms, following its guide:\n` +
     wanted.map(p => `- ${p}: ${P.SOCIAL_PLATFORM_GUIDE[p]}`).join('\n');
 

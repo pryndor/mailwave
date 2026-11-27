@@ -14,7 +14,7 @@ Last revised 2026-11-27. Everything open, in priority order. Detailed lists:
   Later option: real auto-install with `electron-updater` (needs `latest*.yml` files in releases
   and, on Mac/Windows, code signing).
 - **Social posting started (2026-11-27).** Social page, scheduling, AI writer, LinkedIn,
-  Facebook Pages, Instagram and X are built and tested against fake APIs only. Code: `electron/social/`,
+  Facebook Pages, Instagram, X, Bluesky and Mastodon are built and tested against fake APIs only. Code: `electron/social/`,
   `renderer/src/pages/Social.jsx`, tests in `tests/social.test.js`.
 
 ## P0. Urgent: do these yourself, in Razorpay and on your computer
@@ -46,6 +46,14 @@ Done:
   account at a time), text with link in the text, one image via `POST /2/media/upload`, X-style
   character counting (links 23, wide characters 2), clear messages for 402 (no credits),
   duplicates and rate limits. X charges per post (pay-per-use since 2026). `electron/social/x.js`.
+- [x] **Bluesky** (2026-11-27): handle + app password (not stored; refresh JWT kept and used
+  before publishing), login at bsky.social or a named host then calls to the account's PDS from
+  the DID document, link/hashtag facets with UTF-8 byte offsets, link preview card (og:title,
+  description, thumbnail blob) or one image (1 MB limit), 300-grapheme count. `bluesky.js`.
+- [x] **Mastodon** (2026-11-27): server name only; registers an app on the server
+  (`/api/v1/apps`), OAuth with `http://127.0.0.1:47621/mastodon/callback`, per-server character
+  limit and URL length from `/api/v2/instance`, image upload with processing poll, idempotency
+  key on posts. `mastodon.js`.
 
 Next, in order:
 - [ ] **Live test LinkedIn** with a real developer app (only tested against a fake API so far).
@@ -55,13 +63,15 @@ Next, in order:
   the `127.0.0.1` callback, Native App (no secret) sign-in, text post, link post, image upload via
   `/2/media/upload` multipart, refresh after 2 hours (scheduled post), 402 message when credits
   run out.
+- [ ] **Live test Bluesky and Mastodon** (both free, quick): app-password sign-in, link card
+  with thumbnail, image post, hashtag/link facets clickable, session refresh after 2 hours;
+  Mastodon app registration and `127.0.0.1` redirect on mastodon.social, a 202 media upload.
 - [ ] **Live test Facebook + Instagram** with a real Meta app in development mode. Check: login
   dialog accepts the `scope` list (newer "Facebook Login for Business" apps may need a
   `config_id` instead), localhost redirect accepted, Page text/link/photo posts, Instagram image
   post via the unpublished-photo URL, the helper photo is deleted, PNG works for Instagram.
 - [ ] Meta extras: Instagram carousels and Reels, Facebook multi-photo, first comment, App Review
   path for people who want MailWave to post for clients' Pages.
-- [ ] **Bluesky** (app password, no developer app) and **Mastodon** (access token per server).
 - [ ] **Threads** (Meta, reuses the Meta app).
 - [ ] **Google Business Profile** (local businesses: posts, offers, events). API access needs a
   Google request form approval.
@@ -74,7 +84,7 @@ Next, in order:
 ## P2. Release (free version)
 
 - [ ] Live-test LinkedIn (above), then bump `package.json` version (now 1.2.0): "all features
-  free, social posting (LinkedIn, Facebook, Instagram, X)".
+  free, social posting (LinkedIn, Facebook, Instagram, X, Bluesky, Mastodon)".
 - [ ] Tag `v*` so `.github/workflows/build.yml` builds Linux, Windows and Mac, then **publish**
   the draft release with notes. Installed apps (1.3.0 and later) see it within a day through the
   update check; drafts and pre-releases are never announced.
