@@ -5,8 +5,9 @@
 //   { id, name, platforms, REDIRECT_URI, connect() } → one account or several
 // A publisher posts to one kind of account:
 //   { id, name, maxChars, requiresImage, publish() }
-// LinkedIn is both; Meta is one provider for the facebook and instagram
-// publishers.
+// LinkedIn and X are both; Meta is one provider for the facebook and
+// instagram publishers. A platform whose tokens expire quickly (X: two hours)
+// also has refresh(), and index.js renews the token before publishing.
 //
 // Scheduled posts live in SQLite, and runDue() is called by the app's
 // once-a-minute scheduler, so a schedule survives restarts without timers.
@@ -17,13 +18,13 @@ const oauth    = require('./oauth');
 
 const linkedin = require('./linkedin');
 const meta     = require('./meta');
+const x        = require('./x');
 
-const PROVIDERS  = { linkedin, meta };
-const PLATFORMS  = { linkedin, facebook: meta.facebook, instagram: meta.instagram }; // publishers
+const PROVIDERS  = { linkedin, meta, x };
+const PLATFORMS  = { linkedin, facebook: meta.facebook, instagram: meta.instagram, x }; // publishers
 
 // Platforms planned but not built yet, shown greyed out on the Accounts tab.
 const COMING_SOON = [
-  { id: 'x',         name: 'X (Twitter)' },
   { id: 'bluesky',   name: 'Bluesky' },
   { id: 'threads',   name: 'Threads' },
   { id: 'mastodon',  name: 'Mastodon' },
@@ -37,6 +38,8 @@ const COMING_SOON = [
 // good, so the user decides.
 const MISSED_AFTER_MS = 6 * 60 * 60 * 1000;
 const EXPIRY_WARNING_DAYS = 7;
+// Renew a refreshable token when it has less than this left.
+const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
 const deps = { openUrl: (url) => require('electron').shell.openExternal(url), notify: () => {} };
 
@@ -51,9 +54,10 @@ function getConfig() {
   return {
     providers: Object.values(PROVIDERS).map(p => {
       const c = appConfig(p.id);
-      return { id: p.id, name: p.name, platforms: p.platforms, redirectUri: p.REDIRECT_URI, clientId: c.clientId, hasSecret: !!c.clientSecret };
+      return { id: p.id, name: p.name, platforms: p.platforms, redirectUri: p.REDIRECT_URI, clientId: c.clientId, hasSecret: !!c.clientSecret, secretOptional: !!p.secretOptional };
     }),
-    publishers: Object.values(PLATFORMS).map(p => ({ id: p.id, name: p.name, maxChars: p.maxChars, requiresImage: !!p.requiresImage })),
+    // countsLikeX: the renderer counts links as 23 and wide characters as 2.
+    publishers: Object.values(PLATFORMS).map(p => ({ id: p.id, name: p.name, maxChars: p.maxChars, requiresImage: !!p.requiresImage, countsLikeX: !!p.countChars })),
     comingSoon: COMING_SOON,
   };
 }
@@ -83,7 +87,7 @@ async function connect(provider) {
 
 function listAccounts() {
   const soon = Date.now() + EXPIRY_WARNING_DAYS * 86400000;
-  return store.listAccounts().map(a => ({ ...a, expiring: !a.expired && !!a.expires_at && new Date(a.expires_at).getTime() < soon }));
+  return store.listAccounts().map(a => ({ ...a, expiring: !a.expired && !a.renews && !!a.expires_at && new Date(a.expires_at).getTime() < soon }));
 }
 
 // ── Posts ────────────────────────────────────────────────────────────────────
@@ -91,6 +95,12 @@ function listAccounts() {
 function textFor(post, platform) {
   const v = post.variants?.[platform];
   return (typeof v === 'string' && v.trim()) ? v : post.text;
+}
+
+// Length the way the platform counts it. X counts the link too, because it
+// goes in the text.
+function lengthFor(p, text, link) {
+  return p.countChars ? p.countChars(p.postText(text, (link || '').trim())) : text.length;
 }
 
 // Problems that would make a publish fail, found before trying.
@@ -105,7 +115,8 @@ function validate(post, accounts = store.listAccounts()) {
     const text = textFor(post, t.platform).trim();
     if (!text && !post.image_path) problems.push(`${p.name}: the post is empty.`);
     if (p.requiresImage && !post.image_path) problems.push(`${p.name}: add an image, it can't publish text-only posts.`);
-    if (text.length > p.maxChars) problems.push(`${p.name}: ${text.length} characters, the limit is ${p.maxChars}.`);
+    const len = lengthFor(p, text, post.link);
+    if (len > p.maxChars) problems.push(`${p.name}: ${len} characters${p.countChars && post.link ? ' with the link' : ''}, the limit is ${p.maxChars}.`);
     if (p.maxHashtags && meta.countHashtags(text) > p.maxHashtags) problems.push(`${p.name}: more than ${p.maxHashtags} hashtags.`);
     if (acc.expired) problems.push(`${acc.name} (${p.name}): sign-in expired. Reconnect it on the Accounts tab.`);
   }
@@ -148,10 +159,12 @@ async function publishClaimed(id) {
     const text = textFor(post, t.platform);
     if (!p || !account) { store.updateTarget(t.id, { status: 'failed', error: 'Account is no longer connected.' }); continue; }
     if (account.expired) { store.updateTarget(t.id, { status: 'failed', error: 'Sign-in expired. Reconnect the account, then retry.' }); continue; }
-    if (text.length > p.maxChars) { store.updateTarget(t.id, { status: 'failed', error: `Too long: ${text.length} of ${p.maxChars} characters.` }); continue; }
+    const len = lengthFor(p, text, post.link);
+    if (len > p.maxChars) { store.updateTarget(t.id, { status: 'failed', error: `Too long: ${len} of ${p.maxChars} characters.` }); continue; }
 
     store.updateTarget(t.id, { status: 'publishing', error: '' });
     try {
+      await freshToken(p, account);
       const r = await p.publish({ account, text, link: post.link.trim(), image_path: post.image_path });
       store.updateTarget(t.id, { status: 'published', remote_id: r.remote_id || '', remote_url: r.remote_url || '', published_at: new Date().toISOString() });
     } catch (err) {
@@ -164,6 +177,29 @@ async function publishClaimed(id) {
   const done = store.getPost(id);
   return { ok: status === 'published', post: done, error: status === 'published' ? undefined : failureSummary(done) };
 }
+
+// Renews the access token in place when it's close to expiring. One refresh
+// per account at a time: X rotates refresh tokens, so two refreshes racing
+// with the same old token would leave one of them holding a dead one.
+const refreshing = new Map();
+async function freshToken(p, account) {
+  if (!p.refresh || !account.refresh_token || !account.expires_at) return;
+  if (new Date(account.expires_at).getTime() - Date.now() > REFRESH_MARGIN_MS) return;
+  if (!refreshing.has(account.id)) {
+    const job = (async () => {
+      const latest = store.getAccountWithToken(account.id); // another publish may have refreshed already
+      if (latest.expires_at && new Date(latest.expires_at).getTime() - Date.now() > REFRESH_MARGIN_MS) return latest;
+      const tokens = await p.refresh({ account: latest, ...appConfig(providerOf(p.id)) });
+      store.updateTokens(account.id, tokens);
+      return { ...latest, ...tokens };
+    })().finally(() => refreshing.delete(account.id));
+    refreshing.set(account.id, job);
+  }
+  const fresh = await refreshing.get(account.id);
+  Object.assign(account, { token: fresh.token, refresh_token: fresh.refresh_token, expires_at: fresh.expires_at });
+}
+
+const providerOf = (platform) => Object.values(PROVIDERS).find(p => p.platforms.includes(platform)).id;
 
 function failureSummary(post) {
   return post.targets.filter(t => t.status === 'failed').map(t => `${t.account_name}: ${t.error}`).join(' ');

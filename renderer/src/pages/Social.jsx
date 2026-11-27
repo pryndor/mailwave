@@ -36,6 +36,20 @@ function toLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+// X's way of counting (mirrors electron/social/x.js): every link is 23,
+// most Latin/Cyrillic/punctuation 1, other characters (CJK, emoji) 2.
+const URL_RE = /https?:\/\/[^\s]+/gi
+function xLength(text) {
+  const s = String(text || '')
+  let n = (s.match(URL_RE) || []).length * 23
+  for (const ch of s.replace(URL_RE, '')) {
+    const c = ch.codePointAt(0)
+    n += (c <= 0x10ff || (c >= 0x2000 && c <= 0x200d) || (c >= 0x2010 && c <= 0x201f) || (c >= 0x2032 && c <= 0x2037)) ? 1 : 2
+  }
+  return n
+}
+const withLink = (text, link) => (!link || text.includes(link)) ? text : (text ? `${text}\n\n${link}` : link)
+
 const fmt = iso => iso ? new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''
 
 export default function Social() {
@@ -266,8 +280,14 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
     )
   }
 
+  // Length as each platform counts it. X counts the link, which goes in the text.
+  const lengthOn = (pl, t) => publishers[pl]?.countsLikeX ? xLength(withLink(t, link.trim())) : t.length
   const limit = view === 'all' ? Math.min(...platforms.map(p => limits[p] || Infinity)) : limits[view]
-  const over = platforms.filter(p => textFor(p).length > (limits[p] || Infinity))
+  const over = platforms.filter(p => lengthOn(p, textFor(p)) > (limits[p] || Infinity))
+  // Main text: show the count for the platform with the tightest limit.
+  const tightest = view === 'all' ? platforms.reduce((a, p) => (limits[p] || Infinity) < (limits[a] || Infinity) ? p : a, platforms[0]) : view
+  const shown = view === 'all' ? text : textFor(view)
+  const count = tightest ? lengthOn(tightest, shown) : shown.length
   const needImage = imagePath ? [] : platforms.filter(p => publishers[p]?.requiresImage).map(p => publishers[p].name)
 
   return (
@@ -311,8 +331,9 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
             )}
             <textarea className="textarea" rows={10} value={current} onChange={e => setCurrent(e.target.value)}
               placeholder={view === 'all' ? 'What do you want to share? Announce an event, an offer, a new article…' : textFor(view)} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 12, marginTop: 4, color: (view === 'all' ? text : textFor(view)).length > limit ? 'var(--danger)' : 'var(--text-dim)' }}>
-              {(view === 'all' ? text : textFor(view)).length}{Number.isFinite(limit) ? ` / ${limit}` : ''}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 12, marginTop: 4, color: count > limit ? 'var(--danger)' : 'var(--text-dim)' }}
+              title={publishers[tightest]?.countsLikeX ? 'Counted the way X counts: the link is 23 characters, emoji and some scripts count double' : ''}>
+              {count}{Number.isFinite(limit) ? ` / ${limit}` : ''}{publishers[tightest]?.countsLikeX && link.trim() ? ' (with link)' : ''}
             </div>
 
             <div className="form-row" style={{ marginTop: 10 }}>
@@ -328,7 +349,7 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
                 <button className="btn btn-ghost btn-sm" onClick={() => setImage('')}><X size={12} /></button>
               </>}
             </div>
-            {imagePath && link && <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>With an image attached, the image is shown instead of a link preview. Facebook gets the link added to the text; on LinkedIn, put it in the text yourself if people should click it.</p>}
+            {imagePath && link && <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>With an image attached, the image is shown instead of a link preview. Facebook and X get the link added to the text; on LinkedIn, put it in the text yourself if people should click it.</p>}
           </div>
 
           {over.length > 0 && <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 10 }}>Too long for {over.join(', ')}. Shorten it, or write a shorter version on that platform's tab.</p>}
@@ -410,6 +431,13 @@ const SETUP_STEPS = {
     <>For Instagram: switch the Instagram account to a <strong>Business or Creator</strong> account and link it to your Facebook Page (Page settings → Linked accounts).</>,
     <>Copy the <strong>App ID</strong> and <strong>App Secret</strong> (App settings → Basic) into the fields here, save, then click Connect and tick the Pages and Instagram accounts to share.</>,
   ],
+  x: [
+    <><strong>X charges for every post.</strong> There's no free tier: posting uses prepaid credits on your X developer account (about $0.015 a post, more for posts with a link; check current prices at <strong>docs.x.com</strong>). MailWave adds nothing on top.</>,
+    <>Go to <strong>console.x.com</strong> (developer.x.com), sign in with the X account you'll post from, create a project and an app, and add credits.</>,
+    <>In the app's <strong>User authentication settings</strong>: turn on <strong>OAuth 2.0</strong>, set permissions to <strong>Read and write</strong>, and type of app to <strong>Native App</strong> (no secret needed) or Web App.</>,
+    <>Add the callback URL below exactly as shown (it uses <strong>127.0.0.1</strong>, not localhost), and any website for the required website field.</>,
+    <>Copy the <strong>OAuth 2.0 Client ID</strong> (not the API Key) into the field here. For a Web App, also the Client Secret. Save, then click Connect.</>,
+  ],
   linkedin: [
     <>Go to <strong>linkedin.com/developers/apps</strong> and click <strong>Create app</strong>. It needs a LinkedIn Company Page to be linked; any page you admin works.</>,
     <>On the app's <strong>Products</strong> tab, add <strong>Sign In with LinkedIn using OpenID Connect</strong> and <strong>Share on LinkedIn</strong>. Both are approved instantly.</>,
@@ -421,8 +449,10 @@ const SETUP_STEPS = {
 const PROVIDER_NOTE = {
   linkedin: 'Posts to your personal profile · up to 3000 characters · one image or link per post',
   meta: 'Posts to Facebook Pages you manage, and to Instagram Business/Creator accounts linked to them · Instagram needs an image',
+  x: 'Posts to your X account · 280 characters (a link counts as 23) · one image · paid per post by X',
 }
-const CREDENTIAL_LABELS = { meta: ['App ID', 'App Secret'], linkedin: ['Client ID', 'Client Secret'] }
+const CREDENTIAL_LABELS = { meta: ['App ID', 'App Secret'], linkedin: ['Client ID', 'Client Secret'], x: ['OAuth 2.0 Client ID', 'Client Secret (Web App only)'] }
+const PLATFORM_NAME = { linkedin: 'LinkedIn', facebook: 'Facebook', instagram: 'Facebook', x: 'X' }
 
 function Accounts({ accounts, config, onChanged }) {
   if (!config) return null
@@ -450,7 +480,7 @@ function PlatformCard({ platform, accounts, onChanged }) {
   const [secret, setSecret]     = useState('')
   const [connecting, setConnecting] = useState(false)
   const [showSetup, setShowSetup]   = useState(!platform.clientId)
-  const configured = platform.clientId && platform.hasSecret
+  const configured = platform.clientId && (platform.hasSecret || platform.secretOptional)
 
   const saveCreds = async () => {
     const r = await window.api.social.saveAppConfig({ provider: platform.id, clientId, ...(secret ? { clientSecret: secret } : {}) })
@@ -470,7 +500,7 @@ function PlatformCard({ platform, accounts, onChanged }) {
   }
 
   const disconnect = async (a) => {
-    if (!confirm(`Disconnect ${a.name}? Scheduled posts to this account won't go out. To fully revoke access, also remove the app in your ${a.platform === 'linkedin' ? 'LinkedIn' : 'Facebook'} settings.`)) return
+    if (!confirm(`Disconnect ${a.name}? Scheduled posts to this account won't go out. To fully revoke access, also remove the app in your ${PLATFORM_NAME[a.platform] || a.platform} settings.`)) return
     await window.api.social.disconnect(a.id)
     onChanged()
   }
@@ -495,7 +525,7 @@ function PlatformCard({ platform, accounts, onChanged }) {
           <div style={{ flex: 1, fontSize: 13 }}>
             <div style={{ color: 'var(--text-h)' }}>{a.name}</div>
             <div style={{ fontSize: 11, color: a.expired ? 'var(--danger)' : a.expiring ? '#e0a020' : 'var(--text-dim)' }}>
-              {a.expired ? 'Sign-in expired: click Connect to renew' : a.expires_at ? `Sign-in valid until ${fmt(a.expires_at)}` : 'Connected'}
+              {a.expired ? 'Sign-in expired: click Connect to renew' : a.renews ? 'Connected · sign-in renews automatically' : a.expires_at ? `Sign-in valid until ${fmt(a.expires_at)}` : 'Connected'}
             </div>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={() => disconnect(a)}><Unplug size={12} /> Disconnect</button>
@@ -507,7 +537,7 @@ function PlatformCard({ platform, accounts, onChanged }) {
         {showSetup && (
           <div style={{ marginTop: 10 }}>
             <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
-              MailWave connects through your own free {platform.name} developer app, the same way it sends email through your own SMTP account. Nothing goes through our servers.
+              MailWave connects through your own {platform.id === 'x' ? '' : 'free '}{platform.name} developer app, the same way it sends email through your own SMTP account. Nothing goes through our servers.
             </p>
             <ol style={{ fontSize: 12, color: 'var(--text)', paddingLeft: 18, marginBottom: 12, lineHeight: 1.7 }}>
               {(SETUP_STEPS[platform.id] || []).map((s, i) => <li key={i}>{s}</li>)}
@@ -529,7 +559,7 @@ function PlatformCard({ platform, accounts, onChanged }) {
                 <input className="input" type="password" value={secret} onChange={e => setSecret(e.target.value)} placeholder={platform.hasSecret ? '••••••••' : ''} />
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={saveCreds} disabled={!clientId.trim() || (!secret && !platform.hasSecret)}>Save credentials</button>
+            <button className="btn btn-primary btn-sm" onClick={saveCreds} disabled={!clientId.trim() || (!secret && !platform.hasSecret && !platform.secretOptional)}>Save credentials</button>
           </div>
         )}
       </div>

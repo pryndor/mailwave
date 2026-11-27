@@ -63,6 +63,8 @@ const DEFAULTS = {
   social_linkedin_client_secret: '',
   social_meta_client_id:         '',
   social_meta_client_secret:     '',
+  social_x_client_id:            '',
+  social_x_client_secret:        '',
   // Update check (electron/updates.js)
   update_auto_check:       true,
   update_last_check:       '',

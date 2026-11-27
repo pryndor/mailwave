@@ -155,7 +155,8 @@ Fill in **Subject B** in the editor, then choose:
 | LinkedIn (your personal profile) | ✅ Text, one image or a link preview |
 | Facebook Pages | ✅ Text with a link preview, or one image |
 | Instagram (Business or Creator account linked to a Facebook Page) | ✅ One image with a caption (Instagram doesn't allow text-only posts) |
-| X (Twitter), Bluesky, Mastodon, Threads, Google Business Profile, Pinterest | Planned, in that order |
+| X (Twitter) | ✅ Text (a link goes in the text and shows as a card) or one image. X charges per post, see below |
+| Bluesky, Mastodon, Threads, Google Business Profile, Pinterest | Planned, in that order |
 
 - **One post, several platforms.** Each platform gets its own tab where you can write a different version; empty means it uses the main text. Character limits are checked before anything is sent.
 - **AI writer** (needs AI turned on): write posts from a short description, fit your text to each platform's style, or turn an email campaign into posts that promote it.
@@ -176,6 +177,14 @@ Fill in **Subject B** in the editor, then choose:
 5. Paste the **App ID** and **App Secret** into MailWave, save, click **Connect**, and tick the Pages and Instagram accounts to share.
 
 Instagram only accepts images from a web address, so MailWave uploads the image to your linked Facebook Page as an *unpublished* photo (not shown to anyone), gives Instagram that copy, and deletes it once the post is live. Page sign-ins don't expire on a timer, but stop working if you change your Facebook password or remove the app; MailWave then asks you to reconnect.
+
+**Connecting X (Twitter).** X has no free posting tier: since 2026 each post is paid from prepaid credits on your own X developer account (at the time of writing about $0.015 per post, more for a post with a link; check [docs.x.com](https://docs.x.com) for current prices). MailWave adds nothing on top. **Social → Accounts → X (Twitter) → Show app setup** has the steps:
+1. At [console.x.com](https://console.x.com), create a project and app with the X account you'll post from, and add credits.
+2. In the app's **User authentication settings**, turn on **OAuth 2.0**, choose **Read and write**, and app type **Native App** (no secret needed) or Web App.
+3. Add `http://127.0.0.1:47619/x/callback` as a callback URL (exactly that: `127.0.0.1`, not `localhost`).
+4. Paste the **OAuth 2.0 Client ID** (and, for a Web App, the Client Secret) into MailWave, save, and click **Connect**.
+
+X sign-ins last two hours, so MailWave keeps the refresh token X gives and renews the sign-in by itself before each post. The character counter counts the way X does: 280 characters, a link counts as 23, emoji and some scripts count double.
 
 LinkedIn sign-ins last 60 days. MailWave warns you a week before one expires; click **Connect** again to renew it. Posting to Company Pages needs LinkedIn's Community Management API, which LinkedIn grants after review, so it isn't offered yet.
 
@@ -268,7 +277,7 @@ npm run build:win    # NSIS installer (on Windows)
 npm run build:mac    # dmg + zip (on macOS)
 ```
 
-The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, social posting against fake LinkedIn and Facebook/Instagram APIs (including the sign-in callback), and the AI features against a fake provider.
+The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, social posting against fake LinkedIn, Facebook/Instagram and X APIs (including the sign-in callback), and the AI features against a fake provider.
 
 CI (`.github/workflows/build.yml`) builds all three systems and attaches them to a draft GitHub Release when you push a `v*` tag. Users' apps are told about the release once you **publish** the draft (drafts and pre-releases are never announced).
 
@@ -277,7 +286,7 @@ CI (`.github/workflows/build.yml`) builds all three systems and attaches them to
 | Path | What's there |
 |---|---|
 | `electron/` | Main process: database (`db.js`), sending (`mailer.js`), AI (`ai*.js`), Team Sync, Automation API, Smart Schedule |
-| `electron/social/` | Social posting: accounts and posts (`store.js`), scheduling (`index.js`), OAuth sign-in (`oauth.js`), one file per platform (`linkedin.js`, `meta.js` for Facebook and Instagram) |
+| `electron/social/` | Social posting: accounts and posts (`store.js`), scheduling (`index.js`), OAuth sign-in (`oauth.js`), one file per platform (`linkedin.js`, `meta.js` for Facebook and Instagram, `x.js`) |
 | `renderer/` | The interface (React + Vite) |
 | `tests/` | Test suite (`node:test`) |
 | `license-tooling/` | Scripts to make the signing key pair and issue Pro licenses (paid plans are off for now) |

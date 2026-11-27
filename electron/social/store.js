@@ -57,7 +57,10 @@ const parse = (s, fallback) => { try { return JSON.parse(s); } catch { return fa
 function publicAccount(row) {
   if (!row) return null;
   const { token, refresh_token, meta, ...rest } = row;
-  return { ...rest, meta: parse(meta, {}), expired: !!row.expires_at && new Date(row.expires_at) <= new Date() };
+  // renews: the platform gave a refresh token, so a passed expires_at only
+  // means the next publish renews the token first (X).
+  const renews = !!refresh_token;
+  return { ...rest, meta: parse(meta, {}), renews, expired: !renews && !!row.expires_at && new Date(row.expires_at) <= new Date() };
 }
 
 function listAccounts() {
@@ -83,6 +86,12 @@ function upsertAccount({ platform, account_id, name = '', avatar = '', token, re
       meta = excluded.meta, updated_at = datetime('now')
   `).run({ platform, account_id, name, avatar, token: seal(token), refresh_token: seal(refresh_token), expires_at, meta: JSON.stringify(meta) });
   return publicAccount(db.prepare('SELECT * FROM social_accounts WHERE platform = ? AND account_id = ?').get(platform, account_id));
+}
+
+// After a refresh. X issues a new refresh token every time.
+function updateTokens(id, { token, refresh_token, expires_at }) {
+  db.prepare(`UPDATE social_accounts SET token = ?, refresh_token = ?, expires_at = ?, updated_at = datetime('now') WHERE id = ?`)
+    .run(seal(token), seal(refresh_token || ''), expires_at || null, id);
 }
 
 function deleteAccount(id) {
@@ -195,7 +204,7 @@ function derivedStatus(post_id) {
 }
 
 module.exports = {
-  listAccounts, getAccountWithToken, upsertAccount, deleteAccount,
+  listAccounts, getAccountWithToken, upsertAccount, updateTokens, deleteAccount,
   listPosts, getPost, savePost, deletePost, setSchedule, setPostStatus, updateTarget,
   claimDuePosts, claimPost, recoverInterrupted, derivedStatus,
 };

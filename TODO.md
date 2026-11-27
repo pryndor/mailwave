@@ -13,8 +13,8 @@ Last revised 2026-11-27. Everything open, in priority order. Detailed lists:
   once per new version, Settings → Updates with Check now. Notify only (`electron/updates.js`).
   Later option: real auto-install with `electron-updater` (needs `latest*.yml` files in releases
   and, on Mac/Windows, code signing).
-- **Social posting started (2026-11-27).** Social page, scheduling, AI writer and LinkedIn
-  (personal profile) are built and tested against a fake LinkedIn API. Code: `electron/social/`,
+- **Social posting started (2026-11-27).** Social page, scheduling, AI writer, LinkedIn,
+  Facebook Pages, Instagram and X are built and tested against fake APIs only. Code: `electron/social/`,
   `renderer/src/pages/Social.jsx`, tests in `tests/social.test.js`.
 
 ## P0. Urgent: do these yourself, in Razorpay and on your computer
@@ -40,19 +40,27 @@ Done:
   shared Page and linked Instagram account. Facebook: text + link card, or one photo. Instagram:
   one image + caption, hosted via an unpublished Page photo (deleted after publishing), container
   status polling, 30-hashtag check. Graph API `v24.0` in `electron/social/meta.js`.
+- [x] **X (Twitter)** (2026-11-27): OAuth 2.0 + PKCE through the user's own app (Native App
+  without secret, or Web App with Basic auth), callback `http://127.0.0.1:47619/x/callback`,
+  two-hour tokens refreshed before publishing (rotating refresh tokens saved, one refresh per
+  account at a time), text with link in the text, one image via `POST /2/media/upload`, X-style
+  character counting (links 23, wide characters 2), clear messages for 402 (no credits),
+  duplicates and rate limits. X charges per post (pay-per-use since 2026). `electron/social/x.js`.
 
 Next, in order:
 - [ ] **Live test LinkedIn** with a real developer app (only tested against a fake API so far).
   Check: sign-in, text post, image post, link card, parentheses/@ in text, `LinkedIn-Version`
   header `202610` still accepted (bump yearly in `electron/social/linkedin.js`).
+- [ ] **Live test X** with a real developer app and a few dollars of credits. Check: X accepts
+  the `127.0.0.1` callback, Native App (no secret) sign-in, text post, link post, image upload via
+  `/2/media/upload` multipart, refresh after 2 hours (scheduled post), 402 message when credits
+  run out.
 - [ ] **Live test Facebook + Instagram** with a real Meta app in development mode. Check: login
   dialog accepts the `scope` list (newer "Facebook Login for Business" apps may need a
   `config_id` instead), localhost redirect accepted, Page text/link/photo posts, Instagram image
   post via the unpublished-photo URL, the helper photo is deleted, PNG works for Instagram.
 - [ ] Meta extras: Instagram carousels and Reels, Facebook multi-photo, first comment, App Review
   path for people who want MailWave to post for clients' Pages.
-- [ ] **X (Twitter)**: OAuth 2.0 with PKCE, `tweet.write users.read offline.access`, refresh
-  tokens. Check current API pricing/limits for posting before building.
 - [ ] **Bluesky** (app password, no developer app) and **Mastodon** (access token per server).
 - [ ] **Threads** (Meta, reuses the Meta app).
 - [ ] **Google Business Profile** (local businesses: posts, offers, events). API access needs a
@@ -66,7 +74,7 @@ Next, in order:
 ## P2. Release (free version)
 
 - [ ] Live-test LinkedIn (above), then bump `package.json` version (now 1.2.0): "all features
-  free, social posting (LinkedIn)".
+  free, social posting (LinkedIn, Facebook, Instagram, X)".
 - [ ] Tag `v*` so `.github/workflows/build.yml` builds Linux, Windows and Mac, then **publish**
   the draft release with notes. Installed apps (1.3.0 and later) see it within a day through the
   update check; drafts and pre-releases are never announced.
