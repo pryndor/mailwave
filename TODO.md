@@ -72,7 +72,10 @@ Next, in order:
   post via the unpublished-photo URL, the helper photo is deleted, PNG works for Instagram.
 - [ ] Meta extras: Instagram carousels and Reels, Facebook multi-photo, first comment, App Review
   path for people who want MailWave to post for clients' Pages.
-- [ ] **Threads** (Meta, reuses the Meta app).
+- [ ] **Threads** (Meta, reuses the Meta app). **Paused 2026-11-27: the next platform to build
+  when social work resumes.** Note: Threads uses its own Threads API (graph.threads.net) and
+  OAuth (threads.net), so check whether the existing Meta app can add the Threads use case or
+  needs a separate app.
 - [ ] **Google Business Profile** (local businesses: posts, offers, events). API access needs a
   Google request form approval.
 - [ ] **Pinterest**, then TikTok and YouTube (video-first, later).
