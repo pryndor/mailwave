@@ -1,18 +1,50 @@
+# Dependencies
 node_modules/
-renderer/node_modules/
+
+# Build output
 renderer/dist/
+dist/
 dist-app/
+out/
+*.AppImage
+*.deb
+*.rpm
+*.exe
+*.dmg
+*.blockmap
+
+# Logs and coverage
 *.log
+npm-debug.log*
+coverage/
+.nyc_output/
+
+# OS / editor
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local AI-assistant config
+.claude/
+CLAUDE.local.md
 
 # Electron userData (SQLite DB, settings.json) never belongs in the repo
 *.sqlite
 *.sqlite3
+*.db
 
-# License signing private key — never commit. Only the public key (baked into
-# electron/license.js) ships with the app.
-license-tooling/private_key.pem
-
-# Payment webhook (Hetzner VPS) — local secrets
-payment-webhook-vps/node_modules/
-payment-webhook-vps/.env
+# Secrets: env files (keep the .example templates), keys, certificates
+.env
+.env.*
+!.env.example
+*.pem
+!license-tooling/public_key.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials*.json
+service-account*.json
