@@ -1,6 +1,12 @@
 // Social posting: connect accounts, write a post once, publish it now or on a
-// schedule to several accounts. Each platform is a module with the same shape
-// (see linkedin.js): { id, name, maxChars, connect(), publish() }.
+// schedule to several accounts.
+//
+// A provider is how accounts are connected (one developer app, one sign-in):
+//   { id, name, platforms, REDIRECT_URI, connect() } → one account or several
+// A publisher posts to one kind of account:
+//   { id, name, maxChars, requiresImage, publish() }
+// LinkedIn is both; Meta is one provider for the facebook and instagram
+// publishers.
 //
 // Scheduled posts live in SQLite, and runDue() is called by the app's
 // once-a-minute scheduler, so a schedule survives restarts without timers.
@@ -9,14 +15,14 @@ const { seal, unseal } = require('../secrets');
 const store    = require('./store');
 const oauth    = require('./oauth');
 
-const PLATFORMS = {
-  linkedin: require('./linkedin'),
-};
+const linkedin = require('./linkedin');
+const meta     = require('./meta');
+
+const PROVIDERS  = { linkedin, meta };
+const PLATFORMS  = { linkedin, facebook: meta.facebook, instagram: meta.instagram }; // publishers
 
 // Platforms planned but not built yet, shown greyed out on the Accounts tab.
 const COMING_SOON = [
-  { id: 'facebook',  name: 'Facebook Pages' },
-  { id: 'instagram', name: 'Instagram (Business)' },
   { id: 'x',         name: 'X (Twitter)' },
   { id: 'bluesky',   name: 'Bluesky' },
   { id: 'threads',   name: 'Threads' },
@@ -36,37 +42,43 @@ const deps = { openUrl: (url) => require('electron').shell.openExternal(url), no
 
 // ── App credentials (per platform, per device) ───────────────────────────────
 
-function appConfig(platform) {
+function appConfig(provider) {
   const cfg = settings.getAll();
-  return { clientId: cfg[`social_${platform}_client_id`] || '', clientSecret: unseal(cfg[`social_${platform}_client_secret`] || '') };
+  return { clientId: cfg[`social_${provider}_client_id`] || '', clientSecret: unseal(cfg[`social_${provider}_client_secret`] || '') };
 }
 
 function getConfig() {
   return {
-    platforms: Object.values(PLATFORMS).map(p => {
+    providers: Object.values(PROVIDERS).map(p => {
       const c = appConfig(p.id);
-      return { id: p.id, name: p.name, maxChars: p.maxChars, redirectUri: p.REDIRECT_URI, clientId: c.clientId, hasSecret: !!c.clientSecret };
+      return { id: p.id, name: p.name, platforms: p.platforms, redirectUri: p.REDIRECT_URI, clientId: c.clientId, hasSecret: !!c.clientSecret };
     }),
+    publishers: Object.values(PLATFORMS).map(p => ({ id: p.id, name: p.name, maxChars: p.maxChars, requiresImage: !!p.requiresImage })),
     comingSoon: COMING_SOON,
   };
 }
 
 // clientSecret: undefined = keep, '' = clear, string = replace.
-function saveAppConfig({ platform, clientId, clientSecret } = {}) {
-  if (!PLATFORMS[platform]) throw new Error('Unknown platform');
-  const update = { [`social_${platform}_client_id`]: String(clientId || '').trim() };
-  if (clientSecret !== undefined) update[`social_${platform}_client_secret`] = clientSecret ? seal(String(clientSecret).trim()) : '';
+// `platform` is accepted as an older name for `provider`.
+function saveAppConfig({ provider, platform, clientId, clientSecret } = {}) {
+  const id = provider || platform;
+  if (!PROVIDERS[id]) throw new Error('Unknown platform');
+  const update = { [`social_${id}_client_id`]: String(clientId || '').trim() };
+  if (clientSecret !== undefined) update[`social_${id}_client_secret`] = clientSecret ? seal(String(clientSecret).trim()) : '';
   settings.save(update);
   return { ok: true, ...getConfig() };
 }
 
 // ── Accounts ─────────────────────────────────────────────────────────────────
 
-async function connect(platform) {
-  const p = PLATFORMS[platform];
+// Returns every account the sign-in gave access to (Meta: one per Page and
+// per linked Instagram account).
+async function connect(provider) {
+  const p = PROVIDERS[provider];
   if (!p) throw new Error('This platform isn\'t supported yet.');
-  const result = await p.connect({ ...appConfig(platform), oauth, openUrl: deps.openUrl });
-  return { ok: true, account: store.upsertAccount(result) };
+  const result = await p.connect({ ...appConfig(provider), oauth, openUrl: deps.openUrl });
+  const accounts = (Array.isArray(result) ? result : [result]).map(a => store.upsertAccount(a));
+  return { ok: true, accounts, account: accounts[0] };
 }
 
 function listAccounts() {
@@ -92,7 +104,9 @@ function validate(post, accounts = store.listAccounts()) {
     if (t.status === 'published') continue;
     const text = textFor(post, t.platform).trim();
     if (!text && !post.image_path) problems.push(`${p.name}: the post is empty.`);
+    if (p.requiresImage && !post.image_path) problems.push(`${p.name}: add an image, it can't publish text-only posts.`);
     if (text.length > p.maxChars) problems.push(`${p.name}: ${text.length} characters, the limit is ${p.maxChars}.`);
+    if (p.maxHashtags && meta.countHashtags(text) > p.maxHashtags) problems.push(`${p.name}: more than ${p.maxHashtags} hashtags.`);
     if (acc.expired) problems.push(`${acc.name} (${p.name}): sign-in expired. Reconnect it on the Accounts tab.`);
   }
   if (post.link && !/^https?:\/\/\S+$/i.test(post.link.trim())) problems.push('The link must start with http:// or https://');
@@ -187,7 +201,7 @@ function init() {
 }
 
 module.exports = {
-  PLATFORMS, deps, init,
+  PLATFORMS, PROVIDERS, deps, init,
   getConfig, saveAppConfig, connect, cancelConnect: oauth.cancel, listAccounts, deleteAccount: store.deleteAccount,
   listPosts: store.listPosts, savePost, deletePost: store.deletePost, schedule, unschedule, publishNow, runDue, validate, textFor,
 };

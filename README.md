@@ -153,7 +153,9 @@ Fill in **Subject B** in the editor, then choose:
 | Platform | Status |
 |---|---|
 | LinkedIn (your personal profile) | ✅ Text, one image or a link preview |
-| Facebook Pages, Instagram (Business), X (Twitter), Bluesky, Threads, Mastodon, Google Business Profile, Pinterest | Planned, in that order |
+| Facebook Pages | ✅ Text with a link preview, or one image |
+| Instagram (Business or Creator account linked to a Facebook Page) | ✅ One image with a caption (Instagram doesn't allow text-only posts) |
+| X (Twitter), Bluesky, Mastodon, Threads, Google Business Profile, Pinterest | Planned, in that order |
 
 - **One post, several platforms.** Each platform gets its own tab where you can write a different version; empty means it uses the main text. Character limits are checked before anything is sent.
 - **AI writer** (needs AI turned on): write posts from a short description, fit your text to each platform's style, or turn an email campaign into posts that promote it.
@@ -165,6 +167,15 @@ Fill in **Subject B** in the editor, then choose:
 2. On **Products**, add **Sign In with LinkedIn using OpenID Connect** and **Share on LinkedIn** (both approved instantly).
 3. On **Auth**, add `http://localhost:47615/linkedin/callback` as an authorized redirect URL.
 4. Paste the **Client ID** and **Client Secret** into MailWave, save, and click **Connect**.
+
+**Connecting Facebook and Instagram.** One sign-in through your own Meta developer app adds every Facebook Page you choose and the Instagram accounts linked to them. **Social → Accounts → Facebook & Instagram → Show app setup** has the steps:
+1. Create an app at [developers.facebook.com/apps](https://developers.facebook.com/apps) with Facebook Login. Keep it in **Development** mode: as the app's admin you can post to your own Pages without Meta's App Review.
+2. Add the permissions `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `business_management`, and for Instagram `instagram_basic`, `instagram_content_publish`.
+3. Add `http://localhost:47617/meta/callback` to **Valid OAuth Redirect URIs**.
+4. For Instagram, switch the account to Business or Creator and link it to your Page.
+5. Paste the **App ID** and **App Secret** into MailWave, save, click **Connect**, and tick the Pages and Instagram accounts to share.
+
+Instagram only accepts images from a web address, so MailWave uploads the image to your linked Facebook Page as an *unpublished* photo (not shown to anyone), gives Instagram that copy, and deletes it once the post is live. Page sign-ins don't expire on a timer, but stop working if you change your Facebook password or remove the app; MailWave then asks you to reconnect.
 
 LinkedIn sign-ins last 60 days. MailWave warns you a week before one expires; click **Connect** again to renew it. Posting to Company Pages needs LinkedIn's Community Management API, which LinkedIn grants after review, so it isn't offered yet.
 
@@ -257,7 +268,7 @@ npm run build:win    # NSIS installer (on Windows)
 npm run build:mac    # dmg + zip (on macOS)
 ```
 
-The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, social posting against a fake LinkedIn API (including the sign-in callback), and the AI features against a fake provider.
+The tests run under Electron's own Node, because `better-sqlite3` is built for it. They cover the send loop against a fake mail server, imports and filters on a real database, Smart Schedule, Team Sync, the Automation API, social posting against fake LinkedIn and Facebook/Instagram APIs (including the sign-in callback), and the AI features against a fake provider.
 
 CI (`.github/workflows/build.yml`) builds all three systems and attaches them to a draft GitHub Release when you push a `v*` tag. Users' apps are told about the release once you **publish** the draft (drafts and pre-releases are never announced).
 
@@ -266,7 +277,7 @@ CI (`.github/workflows/build.yml`) builds all three systems and attaches them to
 | Path | What's there |
 |---|---|
 | `electron/` | Main process: database (`db.js`), sending (`mailer.js`), AI (`ai*.js`), Team Sync, Automation API, Smart Schedule |
-| `electron/social/` | Social posting: accounts and posts (`store.js`), scheduling (`index.js`), OAuth sign-in (`oauth.js`), one file per platform (`linkedin.js`) |
+| `electron/social/` | Social posting: accounts and posts (`store.js`), scheduling (`index.js`), OAuth sign-in (`oauth.js`), one file per platform (`linkedin.js`, `meta.js` for Facebook and Instagram) |
 | `renderer/` | The interface (React + Vite) |
 | `tests/` | Test suite (`node:test`) |
 | `license-tooling/` | Scripts to make the signing key pair and issue Pro licenses (paid plans are off for now) |

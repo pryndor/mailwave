@@ -49,7 +49,7 @@ export default function Social() {
     const [p, a, c] = await Promise.all([window.api.social.posts(), window.api.social.accounts(), window.api.social.config()])
     if (Array.isArray(p)) setPosts(p)
     if (Array.isArray(a)) setAccounts(a)
-    if (c?.platforms) setConfig(c)
+    if (c?.providers) setConfig(c)
   }
   useEffect(() => { load() }, [])
   useEffect(() => window.api.onSocialChanged(() => load()), [])
@@ -193,7 +193,8 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
 
   useEffect(() => { window.api.ai.getConfig().then(setAi) }, [])
 
-  const limits = useMemo(() => Object.fromEntries((config?.platforms || []).map(p => [p.id, p.maxChars])), [config])
+  const publishers = useMemo(() => Object.fromEntries((config?.publishers || []).map(p => [p.id, p])), [config])
+  const limits = useMemo(() => Object.fromEntries((config?.publishers || []).map(p => [p.id, p.maxChars])), [config])
   const chosen = accounts.filter(a => selected.has(a.id))
   const platforms = [...new Set(chosen.map(a => a.platform))]
   const published = new Set((post?.targets || []).filter(t => t.status === 'published').map(t => t.account_id))
@@ -267,6 +268,7 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
 
   const limit = view === 'all' ? Math.min(...platforms.map(p => limits[p] || Infinity)) : limits[view]
   const over = platforms.filter(p => textFor(p).length > (limits[p] || Infinity))
+  const needImage = imagePath ? [] : platforms.filter(p => publishers[p]?.requiresImage).map(p => publishers[p].name)
 
   return (
     <div style={{ padding: 24, overflow: 'auto', flex: 1 }}>
@@ -297,7 +299,7 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
 
           <div className="card">
             <div style={{ display: 'flex', gap: 4, marginBottom: 10, flexWrap: 'wrap' }}>
-              {[['all', 'Main text'], ...platforms.map(p => [p, (config?.platforms.find(x => x.id === p)?.name || p) + (variants[p]?.trim() ? ' •' : '')])].map(([id, label]) => (
+              {[['all', 'Main text'], ...platforms.map(p => [p, (publishers[p]?.name || p) + (variants[p]?.trim() ? ' •' : '')])].map(([id, label]) => (
                 <button key={id} className={`btn btn-sm ${view === id ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setView(id)}>{label}</button>
               ))}
             </div>
@@ -326,10 +328,12 @@ function Composer({ post, accounts, config, onDone, onGoAccounts }) {
                 <button className="btn btn-ghost btn-sm" onClick={() => setImage('')}><X size={12} /></button>
               </>}
             </div>
-            {imagePath && link && <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>With an image attached, LinkedIn shows the image instead of a link preview. Put the link in the text too if people should click it.</p>}
+            {imagePath && link && <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>With an image attached, the image is shown instead of a link preview. Facebook gets the link added to the text; on LinkedIn, put it in the text yourself if people should click it.</p>}
           </div>
 
           {over.length > 0 && <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 10 }}>Too long for {over.join(', ')}. Shorten it, or write a shorter version on that platform's tab.</p>}
+          {needImage.length > 0 && <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 10 }}>{needImage.join(', ')} needs an image. Add one, or untick that account.</p>}
+          {platforms.includes('instagram') && link && <p style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 6 }}>Links in Instagram captions can't be clicked. Mention "link in bio" in the Instagram version if the link matters.</p>}
 
           <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap', alignItems: 'center' }}>
             <button className="btn btn-primary" disabled={!!busy || !selected.size} onClick={() => run('publish')}><Send size={14} /> {busy === 'publish' ? 'Publishing…' : 'Publish now'}</button>
@@ -399,6 +403,13 @@ function AiPanel({ ready, busy, hasText, onRun }) {
 // ── Accounts ─────────────────────────────────────────────────────────────────
 
 const SETUP_STEPS = {
+  meta: [
+    <>Go to <strong>developers.facebook.com/apps</strong>, click <strong>Create app</strong>, and choose the use case for managing a business's Pages / <strong>Facebook Login</strong>. Leave the app in <strong>Development</strong> mode: as its admin you can post to your own Pages without Meta's review.</>,
+    <>Add the permissions <strong>pages_show_list, pages_read_engagement, pages_manage_posts, business_management</strong>, and for Instagram <strong>instagram_basic, instagram_content_publish</strong>.</>,
+    <>Under <strong>Facebook Login → Settings</strong>, add the redirect URL below to <strong>Valid OAuth Redirect URIs</strong>. (Meta allows localhost addresses while the app is in development mode.)</>,
+    <>For Instagram: switch the Instagram account to a <strong>Business or Creator</strong> account and link it to your Facebook Page (Page settings → Linked accounts).</>,
+    <>Copy the <strong>App ID</strong> and <strong>App Secret</strong> (App settings → Basic) into the fields here, save, then click Connect and tick the Pages and Instagram accounts to share.</>,
+  ],
   linkedin: [
     <>Go to <strong>linkedin.com/developers/apps</strong> and click <strong>Create app</strong>. It needs a LinkedIn Company Page to be linked; any page you admin works.</>,
     <>On the app's <strong>Products</strong> tab, add <strong>Sign In with LinkedIn using OpenID Connect</strong> and <strong>Share on LinkedIn</strong>. Both are approved instantly.</>,
@@ -407,12 +418,18 @@ const SETUP_STEPS = {
   ],
 }
 
+const PROVIDER_NOTE = {
+  linkedin: 'Posts to your personal profile · up to 3000 characters · one image or link per post',
+  meta: 'Posts to Facebook Pages you manage, and to Instagram Business/Creator accounts linked to them · Instagram needs an image',
+}
+const CREDENTIAL_LABELS = { meta: ['App ID', 'App Secret'], linkedin: ['Client ID', 'Client Secret'] }
+
 function Accounts({ accounts, config, onChanged }) {
   if (!config) return null
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {config.platforms.map(p => (
-        <PlatformCard key={p.id} platform={p} accounts={accounts.filter(a => a.platform === p.id)} onChanged={onChanged} />
+      {config.providers.map(p => (
+        <PlatformCard key={p.id} platform={p} accounts={accounts.filter(a => p.platforms.includes(a.platform))} onChanged={onChanged} />
       ))}
       <div className="card">
         <div style={{ fontWeight: 600, color: 'var(--text-h)', fontSize: 13, marginBottom: 10 }}>Coming next</div>
@@ -436,7 +453,7 @@ function PlatformCard({ platform, accounts, onChanged }) {
   const configured = platform.clientId && platform.hasSecret
 
   const saveCreds = async () => {
-    const r = await window.api.social.saveAppConfig({ platform: platform.id, clientId, ...(secret ? { clientSecret: secret } : {}) })
+    const r = await window.api.social.saveAppConfig({ provider: platform.id, clientId, ...(secret ? { clientSecret: secret } : {}) })
     if (r?.ok === false) { toast.error(r.error); return }
     setSecret('')
     toast.success('Saved')
@@ -447,13 +464,13 @@ function PlatformCard({ platform, accounts, onChanged }) {
     setConnecting(true)
     try {
       const r = await window.api.social.connect(platform.id)
-      if (r?.ok) { toast.success(`Connected ${r.account.name}`); onChanged() }
+      if (r?.ok) { toast.success(`Connected ${r.accounts.map(a => a.name).join(', ')}`); onChanged() }
       else toast.error(r?.error || 'Could not connect', { duration: 10000 })
     } finally { setConnecting(false) }
   }
 
   const disconnect = async (a) => {
-    if (!confirm(`Disconnect ${a.name}? Scheduled posts to this account won't go out. To fully revoke access, also remove the app in your ${platform.name} settings.`)) return
+    if (!confirm(`Disconnect ${a.name}? Scheduled posts to this account won't go out. To fully revoke access, also remove the app in your ${a.platform === 'linkedin' ? 'LinkedIn' : 'Facebook'} settings.`)) return
     await window.api.social.disconnect(a.id)
     onChanged()
   }
@@ -461,10 +478,10 @@ function PlatformCard({ platform, accounts, onChanged }) {
   return (
     <div className="card">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <PlatformBadge platform={platform.id} size={26} />
+        {platform.platforms.map(id => <PlatformBadge key={id} platform={id} size={26} />)}
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600, color: 'var(--text-h)', fontSize: 14 }}>{platform.name}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Posts to your personal profile · up to {platform.maxChars} characters · one image or link per post</div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{PROVIDER_NOTE[platform.id]}</div>
         </div>
         {connecting
           ? <button className="btn btn-ghost" onClick={() => window.api.social.cancelConnect()}>Cancel sign-in</button>
@@ -504,11 +521,11 @@ function PlatformCard({ platform, accounts, onChanged }) {
             </div>
             <div className="form-row">
               <div className="form-group" style={{ flex: 1 }}>
-                <label>Client ID</label>
+                <label>{(CREDENTIAL_LABELS[platform.id] || CREDENTIAL_LABELS.linkedin)[0]}</label>
                 <input className="input" value={clientId} onChange={e => setClientId(e.target.value)} />
               </div>
               <div className="form-group" style={{ flex: 1 }}>
-                <label>Client Secret {platform.hasSecret && <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(saved; type to replace)</span>}</label>
+                <label>{(CREDENTIAL_LABELS[platform.id] || CREDENTIAL_LABELS.linkedin)[1]} {platform.hasSecret && <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(saved; type to replace)</span>}</label>
                 <input className="input" type="password" value={secret} onChange={e => setSecret(e.target.value)} placeholder={platform.hasSecret ? '••••••••' : ''} />
               </div>
             </div>

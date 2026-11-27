@@ -153,7 +153,7 @@ function linkTitle(link) {
 }
 
 module.exports = {
-  id: 'linkedin', name: 'LinkedIn', maxChars: MAX_CHARS,
+  id: 'linkedin', name: 'LinkedIn', maxChars: MAX_CHARS, requiresImage: false, platforms: ['linkedin'],
   REDIRECT_URI, SCOPES, API_VERSION,
   connect, publish, escapeCommentary, buildAuthUrl, exchangeCode, fetchProfile, LinkedInError, deps,
 };

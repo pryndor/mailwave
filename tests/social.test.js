@@ -53,7 +53,7 @@ test('tokens are sealed in the DB and never returned by listAccounts', () => {
 });
 
 test('app secret is sealed and not exposed by getConfig', () => {
-  const c = social.getConfig().platforms.find(p => p.id === 'linkedin');
+  const c = social.getConfig().providers.find(p => p.id === 'linkedin');
   assert.equal(c.clientId, 'cid');
   assert.equal(c.hasSecret, true);
   assert.equal(c.clientSecret, undefined);

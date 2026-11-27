@@ -36,15 +36,21 @@ Done:
 - [x] AI writer: posts from a brief, adapt main text per platform, email campaign → posts.
 - [x] **LinkedIn** personal profile: OAuth sign-in through the user's own developer app, text,
   one image or link card, 60-day token expiry warning.
+- [x] **Facebook Pages + Instagram Business/Creator** (2026-11-27): one Meta sign-in adds every
+  shared Page and linked Instagram account. Facebook: text + link card, or one photo. Instagram:
+  one image + caption, hosted via an unpublished Page photo (deleted after publishing), container
+  status polling, 30-hashtag check. Graph API `v24.0` in `electron/social/meta.js`.
 
 Next, in order:
 - [ ] **Live test LinkedIn** with a real developer app (only tested against a fake API so far).
   Check: sign-in, text post, image post, link card, parentheses/@ in text, `LinkedIn-Version`
   header `202610` still accepted (bump yearly in `electron/social/linkedin.js`).
-- [ ] **Facebook Pages + Instagram Business** (one Meta app, Graph API). Page token from user
-  token; Instagram needs an image or video and a Business account linked to the Page. Publishing
-  for other people's Pages needs Meta App Review (`pages_manage_posts`,
-  `instagram_content_publish`); app admins can post to their own Pages in development mode.
+- [ ] **Live test Facebook + Instagram** with a real Meta app in development mode. Check: login
+  dialog accepts the `scope` list (newer "Facebook Login for Business" apps may need a
+  `config_id` instead), localhost redirect accepted, Page text/link/photo posts, Instagram image
+  post via the unpublished-photo URL, the helper photo is deleted, PNG works for Instagram.
+- [ ] Meta extras: Instagram carousels and Reels, Facebook multi-photo, first comment, App Review
+  path for people who want MailWave to post for clients' Pages.
 - [ ] **X (Twitter)**: OAuth 2.0 with PKCE, `tweet.write users.read offline.access`, refresh
   tokens. Check current API pricing/limits for posting before building.
 - [ ] **Bluesky** (app password, no developer app) and **Mastodon** (access token per server).
